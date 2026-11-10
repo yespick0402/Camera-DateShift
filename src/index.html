@@ -1,49 +1,115 @@
-<!doctype html><html lang="ko"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'">
-<title>Camera DateShift</title><link href="styles.css" rel="stylesheet"><script src="renderer.js" defer></script>
-</head><body>
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'">
+  <title>Camera DateShift</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="renderer.js"></script>
+</head>
+<body>
 <div class="app">
   <header class="app-header">
-    <div class="brand"><img src="../build/icon.png" alt="Camera DateShift 로고"><div><strong>Camera DateShift <em>v1.0.0</em></strong><span>사진·영상의 원본 촬영시각 확인 및 일괄 변경</span></div></div>
-    <div class="header-right"><span class="offline">● 파일은 외부 서버로 전송하지 않습니다</span><span class="camera-badge">SONY · CANON · NIKON · FUJIFILM · 기타</span></div>
-  </header>
-  <main class="workspace">
-    <div class="controls">
-      <section class="card source-panel">
-        <div class="panel-title"><span class="step">01</span><div><h2>사진·영상 불러오기</h2><p>내장 촬영일시와 동반 XML을 함께 분석</p></div></div>
-        <div class="dropzone" id="dropzone" tabindex="0"><span class="drop-symbol">＋</span><strong>파일을 이곳에 드래그하세요</strong><small>복사·이동된 파일도 메타데이터를 확인합니다.</small></div>
-        <div class="buttons-row"><button class="btn btn-primary" id="pickFiles">＋ 파일 선택</button><button class="btn btn-outline" id="pickFolder">▣ 폴더 선택</button><button class="btn btn-text" id="clearAll">초기화</button></div>
-      </section>
-      <section class="card timing-panel">
-        <div class="panel-title"><span class="step">02</span><div><h2>촬영일시 변경</h2><p>같은 간격으로 앞당기거나 늦추기</p></div></div>
-        <div class="mode-tabs"><label><input type="radio" name="action" value="shift" checked><span>시간 이동</span></label><label><input type="radio" name="action" value="absolute"><span>기준 날짜 지정</span></label></div>
-        <div id="shiftControls" class="shift-controls">
-          <div class="direction"><label><input type="radio" name="direction" value="earlier" checked>◀ 과거로</label><label><input type="radio" name="direction" value="later">미래로 ▶</label></div>
-          <div class="time-grid"><label>년<input data-unit="years" type="number" min="0" max="999" value="0"></label><label>월<input data-unit="months" type="number" min="0" max="999" value="0"></label><label>일<input data-unit="days" type="number" min="0" max="9999" value="0"></label><label>시<input data-unit="hours" type="number" min="0" max="9999" value="1"></label><label>분<input data-unit="minutes" type="number" min="0" max="9999" value="0"></label><label>초<input data-unit="seconds" type="number" min="0" max="9999" value="0"></label></div>
-        </div>
-        <div id="absoluteControls" class="absolute-controls" hidden><label for="absoluteInput">첫 번째 선택 파일의 목표 촬영일시</label><input type="datetime-local" id="absoluteInput" step="1" value="2026-01-01T12:00:00"><small>다른 파일도 동일한 시간 차이로 조정합니다.</small></div>
-        <div class="time-review"><label for="timeMode">시간대 정보가 없는 영상 해석</label><select id="timeMode"><option value="auto">자동 분석 · 불확실하면 확인 필요</option><option value="utc">QuickTime UTC → 컴퓨터 시간대</option><option value="local">QuickTime 값을 현지 시각으로</option></select></div>
-        <div class="example" id="example">2026-01-15 14:30:00 → 2026-01-15 13:30:00</div>
-      </section>
-      <section class="card save-panel">
-        <div class="panel-title"><span class="step">03</span><div><h2>저장 및 적용</h2><p>기본값: 원본을 안전하게 보존</p></div></div>
-        <div class="save-choices"><label><input type="radio" name="saveMode" value="copy" checked><span>복사본 만들기 <b class="safe-mark">권장</b></span></label><label><input type="radio" name="saveMode" value="original"><span>원본 직접 수정</span></label></div>
-        <label class="filesystem-line"><input type="checkbox" id="filesystemDates"><span>파일 생성일·수정일도 변경 <small>(선택)</small></span></label>
-        <div class="destination" id="destinationRow"><button id="pickDestination" class="btn btn-outline">저장 폴더 선택</button><span id="destination">저장 위치를 선택하세요.</span></div>
-        <button id="apply" class="btn apply-btn" disabled>선택한 파일 날짜 변경하기</button>
-      </section>
+    <div class="brand">
+      <img src="../build/icon.png" alt="Camera DateShift 아이콘">
+      <div><strong>Camera DateShift <em>v1.0.0</em></strong><span>사진·영상 원본 촬영일시 확인 및 일괄 변경</span></div>
     </div>
-    <section class="card library-panel">
-      <div class="library-title"><div><h2>파일 및 촬영일시 확인</h2><p>파일 날짜가 아닌 카메라 기록을 기준으로 판정합니다. <b>촬영일 확인 필요</b> 파일은 자동 수정하지 않습니다.</p></div><span class="library-tag">메타데이터 우선</span></div>
-      <div class="stats"><div class="stat"><label>전체 파일</label><strong id="countAll">0</strong></div><div class="stat"><label>수정 가능</label><strong id="countReady">0</strong></div><div class="stat stat-amber"><label>확인 필요</label><strong id="countReview">0</strong></div><div class="stat"><label>촬영일 없음</label><strong id="countMissing">0</strong></div><div class="stat"><label>읽기 오류</label><strong id="countError">0</strong></div><div class="stat stat-blue"><label>선택됨</label><strong id="countChecked">0</strong></div></div>
-      <div class="list-controls"><div class="filter-tabs"><button class="filter active" data-filter="all">전체</button><button class="filter" data-filter="ready">수정 가능</button><button class="filter" data-filter="review">확인 필요</button><button class="filter" data-filter="missing">촬영일 없음</button><button class="filter" data-filter="error">오류</button></div><input id="search" placeholder="파일명 검색" aria-label="파일명 검색"></div>
-      <div id="tableSpace" class="table-space"><table><thead><tr><th class="check-col"><input type="checkbox" id="checkAll" title="현재 검색 조건에 맞는 수정 가능 파일 전부 선택"></th><th class="name-col">파일명 · 촬영일 근거</th><th>원본 촬영일시</th><th>변경 후 예상</th><th class="status-col">상태</th></tr></thead><tbody id="fileRows"><tr><td colspan="5" class="empty">사진이나 영상을 불러오면 촬영 시각을 분석합니다.</td></tr></tbody></table></div>
-      <div class="pagination"><span id="shownCount">표시할 파일이 없습니다.</span><div><button id="prevPage" class="btn page" aria-label="이전 페이지">◀</button><span id="pageLabel">1 / 1</span><button id="nextPage" class="btn page" aria-label="다음 페이지">▶</button></div></div>
-      <div class="details"><div class="detail-title">촬영일시는 어디에서 찾나요?</div><div class="detail-text"><strong>사진:</strong> EXIF DateTimeOriginal 우선. <strong>영상:</strong> 시간대 포함 메타데이터 → Sony XML → QuickTime UTC 해석. 시간대 근거가 없으면 확인 필요로 분류합니다.</div></div>
-      <div class="result-box" id="resultBox" hidden><div class="result-title"><b id="resultHeadline">처리 결과</b><button class="btn btn-outline btn-mini" id="saveCsv">CSV 저장</button></div><p id="resultDetails">—</p></div>
+    <div class="header-right"><span class="privacy">● 파일은 외부로 전송되지 않습니다</span><span class="platforms">SONY · CANON · NIKON · FUJIFILM · 기타</span></div>
+  </header>
+
+  <nav class="stage-nav" aria-label="작업 단계">
+    <button type="button" class="stage active" data-tab="files" aria-selected="true"><span class="stage-number">01</span><span>파일 확인</span><small>불러오기 · 촬영일 분석</small></button>
+    <button type="button" class="stage" data-tab="time" aria-selected="false"><span class="stage-number">02</span><span>날짜 변경</span><small>이동 · 변경 전후 확인</small></button>
+    <button type="button" class="stage" data-tab="save" aria-selected="false"><span class="stage-number">03</span><span>저장 및 결과</span><small>복사본 · 원본 수정</small></button>
+    <button type="button" class="stage" data-tab="keys" aria-selected="false"><span class="stage-number">04</span><span>단축키</span><small>변경 · 초기화</small></button>
+  </nav>
+
+  <main class="content-shell">
+    <section class="tab-panel is-active" id="panel-files" aria-label="파일 확인">
+      <div class="panel-heading"><div><span class="eyebrow">STEP 01 · 파일 준비</span><h1>사진과 영상을 불러오세요</h1><p>파일 생성일이 아닌 카메라 내부 촬영일시와 동반 XML 정보를 확인합니다.</p></div>
+        <div class="heading-actions"><button type="button" class="btn btn-primary" id="pickFiles">＋ 파일 선택</button><button type="button" class="btn" id="pickFolder">▣ 폴더 선택</button><button type="button" class="btn btn-light" id="clearAll">초기화</button></div>
+      </div>
+      <div id="dropzone" class="dropzone" tabindex="0"><span class="drop-plus">＋</span><span>파일을 여기로 끌어 놓거나, 위의 <b>파일 선택</b>을 누르세요.</span><small>사진·영상 복사본도 촬영 메타데이터를 확인합니다.</small></div>
+      <div class="stats">
+        <div class="stat"><span>전체 파일</span><strong id="countAll">0</strong></div>
+        <div class="stat"><span>수정 가능</span><strong id="countReady">0</strong></div>
+        <div class="stat stat-amber"><span>확인 필요</span><strong id="countReview">0</strong></div>
+        <div class="stat"><span>촬영일 없음</span><strong id="countMissing">0</strong></div>
+        <div class="stat"><span>읽기 오류</span><strong id="countError">0</strong></div>
+        <div class="stat stat-blue"><span>선택됨</span><strong id="countChecked">0</strong></div>
+      </div>
+      <div class="file-card">
+        <div class="list-controls">
+          <div class="filters" role="group" aria-label="파일 상태 필터"><button class="filter active" data-filter="all">전체</button><button class="filter" data-filter="ready">수정 가능</button><button class="filter" data-filter="review">확인 필요</button><button class="filter" data-filter="missing">촬영일 없음</button><button class="filter" data-filter="error">오류</button></div>
+          <label class="search-box"><span>검색</span><input id="search" type="search" placeholder="파일명 검색" aria-label="파일명 검색"></label>
+        </div>
+        <div id="tableSpace" class="table-space"><table><thead><tr><th class="check-col"><input id="checkAll" type="checkbox" title="현재 필터의 수정 가능 파일 전부 선택"></th><th class="name-col">파일명 · 촬영일 근거</th><th class="date-col">원본 촬영일시</th><th class="date-col">변경 후 예상</th><th class="status-col">상태</th></tr></thead><tbody id="fileRows"><tr><td class="empty" colspan="5">파일이나 폴더를 선택하면 이곳에 표시됩니다.</td></tr></tbody></table></div>
+        <div class="pagination"><span id="shownCount">표시할 파일이 없습니다.</span><div><button id="prevPage" type="button" class="btn btn-mini" aria-label="이전 페이지">◀ 이전</button><span id="pageLabel">1 / 1</span><button id="nextPage" type="button" class="btn btn-mini" aria-label="다음 페이지">다음 ▶</button></div></div>
+      </div>
+      <div class="panel-bottom"><p class="hint">촬영 날짜를 확인할 수 없거나 시간대가 모호한 파일은 자동 수정하지 않습니다.</p><button id="goTime" class="btn btn-primary" type="button">날짜 변경 설정으로 ▶</button></div>
+    </section>
+
+    <section class="tab-panel" id="panel-time" aria-label="날짜 변경" hidden>
+      <div class="panel-heading"><div><span class="eyebrow">STEP 02 · 날짜 변경</span><h1>얼마나 앞당기거나 늦출까요?</h1><p>선택한 모든 파일에 같은 시간 차이를 적용합니다. 미리보기는 원본 파일을 변경하지 않습니다.</p></div><span class="selection-info" id="timeSelection">수정 가능 파일 0개 선택</span></div>
+      <div class="time-layout">
+        <div class="time-options card">
+          <h2>변경 방식</h2>
+          <div class="mode-tabs"><label><input type="radio" name="action" value="shift" checked><span>시간 이동</span></label><label><input type="radio" name="action" value="absolute"><span>기준 날짜 지정</span></label></div>
+          <div id="shiftControls" class="shift-controls">
+            <div class="direction"><label><input type="radio" name="direction" value="earlier" checked> ◀ 과거로</label><label><input type="radio" name="direction" value="later"> 미래로 ▶</label></div>
+            <div class="time-grid"><label>년<input data-unit="years" type="number" min="0" max="999" value="0"></label><label>월<input data-unit="months" type="number" min="0" max="999" value="0"></label><label>일<input data-unit="days" type="number" min="0" max="9999" value="0"></label><label>시<input data-unit="hours" type="number" min="0" max="9999" value="1"></label><label>분<input data-unit="minutes" type="number" min="0" max="9999" value="0"></label><label>초<input data-unit="seconds" type="number" min="0" max="9999" value="0"></label></div>
+          </div>
+          <div id="absoluteControls" class="absolute-controls" hidden><label for="absoluteInput">첫 번째 선택 파일의 목표 촬영일시</label><input type="datetime-local" id="absoluteInput" step="1" value="2026-01-01T12:00:00"><small>나머지 파일에는 같은 시간 차이가 적용됩니다.</small></div>
+          <label class="time-review" for="timeMode"><span>시간대 정보가 없는 영상 해석</span><select id="timeMode"><option value="auto">자동 분석 · 불확실하면 확인 필요</option><option value="utc">QuickTime UTC → 컴퓨터 시간대</option><option value="local">QuickTime 값을 현지 시각으로</option></select></label>
+        </div>
+        <div class="date-preview card">
+          <div class="preview-heading"><div><h2>변경 전 · 후 미리보기</h2><p id="previewAnchorLabel">선택 파일의 촬영일시를 표시합니다.</p></div><span class="preview-badge">원본 보호</span></div>
+          <div class="date-compare">
+            <div class="date-box"><span class="date-tag">원본 촬영일시</span><strong class="date-main" id="beforeDay">—</strong><strong class="clock-main" id="beforeClock">—</strong></div>
+            <span class="compare-arrow" aria-hidden="true">→</span>
+            <div class="date-box after"><span class="date-tag">변경 후 예상</span><strong class="date-main" id="afterDay">—</strong><strong class="clock-main" id="afterClock">—</strong></div>
+          </div>
+          <div class="source-note"><span>촬영일 근거</span><strong id="previewSource">파일을 선택해 주세요.</strong><small id="previewNote">사진 EXIF / 영상 시간대 메타데이터 / 동반 XML을 분석합니다.</small></div>
+        </div>
+      </div>
+      <div class="panel-bottom"><p class="hint">날짜 전체가 보이도록 날짜와 시간·시간대를 나눠 표시합니다.</p><button id="goSave" class="btn btn-primary" type="button">저장 방식 선택으로 ▶</button></div>
+    </section>
+
+    <section class="tab-panel" id="panel-save" aria-label="저장 및 결과" hidden>
+      <div class="panel-heading"><div><span class="eyebrow">STEP 03 · 저장 및 적용</span><h1>원본 보존 여부를 선택하세요</h1><p>기본값은 복사본 저장입니다. 원본 수정은 실행 전에 다시 확인합니다.</p></div><span class="selection-info" id="saveSelection">0개 파일 선택됨</span></div>
+      <div class="save-layout">
+        <div class="card save-options">
+          <h2>저장 방식</h2>
+          <div class="save-choices"><label><input type="radio" name="saveMode" value="copy" checked><span><b>복사본 만들기</b><small>원본은 그대로 두고 새로운 파일 생성</small></span><em>권장</em></label><label><input type="radio" name="saveMode" value="original"><span><b>원본 직접 수정</b><small>원본과 동반 XML을 직접 변경</small></span></label></div>
+          <label class="filesystem-line"><input type="checkbox" id="filesystemDates"><span>파일 생성일·수정일도 촬영일시에 맞추기 <small>(선택 · 운영체제/파일 시스템에 따라 제한 가능)</small></span></label>
+          <div class="destination" id="destinationRow"><button id="pickDestination" class="btn" type="button">저장 폴더 선택</button><span id="destination">복사본 저장 위치를 선택하세요.</span></div>
+          <div class="save-summary"><span>선택한 파일</span><strong id="saveSummaryCount">0개</strong><span>변경 방식</span><strong id="saveSummaryMode">과거로 1시간 이동</strong></div>
+          <button id="apply" type="button" class="btn btn-primary apply-btn" disabled>선택한 파일의 촬영일시 변경하기</button>
+        </div>
+        <div class="card results-panel"><div class="result-title"><h2 id="resultHeadline">작업 결과</h2><button class="btn btn-mini" id="saveCsv" type="button" disabled>CSV 저장</button></div><p class="results-help">촬영일시 변경 후 파일별 성공·실패 내역을 표시합니다.</p><div class="result-box" id="resultBox" hidden><p id="resultDetails">—</p></div><div class="result-empty" id="resultEmpty">아직 실행한 작업이 없습니다.<small>처음에는 복사본으로 테스트하는 것을 권장합니다.</small></div></div>
+      </div>
+      <div class="panel-bottom"><p class="hint">실행 전에 전체 선택 파일과 저장 폴더를 다시 확인하세요.</p><button id="goFiles" class="btn" type="button">◀ 파일 목록 돌아가기</button></div>
+    </section>
+
+    <section class="tab-panel" id="panel-keys" aria-label="단축키 설정" hidden>
+      <div class="panel-heading"><div><span class="eyebrow">STEP 04 · 개인 설정</span><h1>키보드 단축키</h1><p>변경할 항목의 단축키 버튼을 누르고 원하는 키 조합을 누르세요.</p></div><button id="resetKeys" type="button" class="btn">기본값으로 복원</button></div>
+      <div class="shortcut-card card">
+        <div class="shortcut-list">
+          <div class="shortcut-row"><div><b>파일 선택</b><small>사진·영상 파일 불러오기</small></div><button class="key-button" data-shortcut="openFiles" type="button"></button></div>
+          <div class="shortcut-row"><div><b>폴더 선택</b><small>폴더와 하위 폴더 분석</small></div><button class="key-button" data-shortcut="openFolder" type="button"></button></div>
+          <div class="shortcut-row"><div><b>다음 탭</b><small>오른쪽 작업 단계로 이동</small></div><button class="key-button" data-shortcut="nextTab" type="button"></button></div>
+          <div class="shortcut-row"><div><b>이전 탭</b><small>왼쪽 작업 단계로 이동</small></div><button class="key-button" data-shortcut="prevTab" type="button"></button></div>
+          <div class="shortcut-row"><div><b>날짜 변경 실행</b><small>저장 탭에서 선택 파일 변경</small></div><button class="key-button" data-shortcut="apply" type="button"></button></div>
+          <div class="shortcut-row"><div><b>파일명 검색</b><small>파일 확인 탭의 검색창으로 이동</small></div><button class="key-button" data-shortcut="search" type="button"></button></div>
+        </div>
+        <p class="shortcut-help" id="shortcutHelp">Mac은 ⌘, Windows는 Ctrl을 사용합니다. 단축키는 이 프로그램 창이 활성화된 동안에만 작동합니다.</p>
+      </div>
+      <div class="panel-bottom"><p class="hint">단축키는 이 컴퓨터에 저장되며, 앱을 다시 열어도 유지됩니다.</p><button id="goHome" class="btn btn-primary" type="button">파일 확인으로 돌아가기 ▶</button></div>
     </section>
   </main>
-  <footer class="app-footer"><span id="scanStatus">촬영 파일을 불러와 주세요.</span><button id="cancel" class="btn btn-outline btn-mini" hidden>작업 중단</button><span class="footer-right">Camera DateShift v1.0.0 · ExifTool 기반 · 원본 보존 권장</span></footer>
+
+  <footer class="app-footer"><span id="scanStatus" role="status">촬영 파일을 불러와 주세요.</span><button id="cancel" type="button" class="btn btn-mini" hidden>작업 중단</button><span class="footer-right">Camera DateShift v1.0.0 · ExifTool 기반</span></footer>
 </div>
-</body></html>
+</body>
+</html>
