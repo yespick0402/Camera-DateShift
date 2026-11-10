@@ -5,7 +5,7 @@
   tabFiles:'Mod+1', tabTime:'Mod+2', tabSave:'Mod+3', tabKeys:'Mod+4',
   openFiles:'Mod+O',openFolder:'Mod+Shift+O',nextTab:'Mod+Alt+ArrowRight',
   prevTab:'Mod+Alt+ArrowLeft',apply:'Mod+Enter',search:'Mod+F',
-  viewer:'Space',nextFile:'ArrowRight',prevFile:'ArrowLeft'
+  viewer:'Space',toggleSelection:'Enter',nextFile:'ArrowRight',prevFile:'ArrowLeft'
  });
  function keyCombo(event, mac) {
   const parts=[];
@@ -23,7 +23,7 @@
    else if(['Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(event.key))key=event.key===' '?'Space':event.key;
   }
   if(!key)return '';
-  if(!parts.length&&!['Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(key))return '';
+  if(!parts.length&&!['Space','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(key))return '';
   return [...parts,key].join('+');
  }
  const api={defaults,keyCombo};
