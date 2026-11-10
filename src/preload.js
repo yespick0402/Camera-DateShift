@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('dateshift',{
  scan:(files,settings)=>ipcRenderer.invoke('scan',{files,settings}),
  preview:(paths,selected,options)=>ipcRenderer.invoke('preview',{paths,selected,options}),
  apply:(paths,options,mode,outputDir)=>ipcRenderer.invoke('apply',{paths,options,mode,outputDir}),
+ getMediaPreview:(file,large=false)=>ipcRenderer.invoke('get-media-preview',{file,large}),
+ openMediaExternally:file=>ipcRenderer.invoke('open-media-external',file),
  saveCsv:()=>ipcRenderer.invoke('save-csv'),
  cancel:()=>ipcRenderer.send('cancel'),
  fromDroppedFiles:files=>files.map(f=>({path:webUtils.getPathForFile(f),base:''})).filter(f=>f.path),
