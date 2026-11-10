@@ -12,7 +12,8 @@ const state = {
   timeFilter:'all',timeQuery:'',timePage:0,timePageSize:4,
   thumbnailCache:new Map(),thumbnailPending:new Map(),
   running:false,outputDir:'',tab:'files',shortcuts:{...defaults},recording:'',
-  results:[],hasResult:false,viewerOpen:false,viewerRequest:0,mediaRequest:0
+  results:[],hasResult:false,viewerOpen:false,viewerRequest:0,mediaRequest:0,
+  evidenceOpen:false,evidencePage:0,helpOpen:false,helpPage:0
 };
 const el = (tag,cls='',value) => {
   const node=document.createElement(tag);
@@ -56,6 +57,8 @@ function ensureTimeActive(){
 function openTab(tab){
   if(!tabs.includes(tab))return;
   if(state.viewerOpen)closeViewer();
+  if(state.evidenceOpen)closeEvidence();
+  if(state.helpOpen)closeHelp();
   state.tab=tab;
   $$('.stage').forEach(btn=>{
     const active=btn.dataset.tab===tab;
@@ -196,11 +199,18 @@ function renderTimeRows(){
     tr.addEventListener('dblclick',e=>{if(e.target.closest('input,button'))return;setActiveFile(row.path);openViewer();});
     const checkbox=el('input');checkbox.type='checkbox';checkbox.checked=state.selected.has(row.path);
     checkbox.disabled=state.running||!canSelect(row);checkbox.setAttribute('aria-label',`${row.name} 변경 대상 선택`);
-    checkbox.addEventListener('change',()=>{changeSelection(row,checkbox.checked);});
+    checkbox.addEventListener('focus',()=>{state.activePath=row.path;});
+    checkbox.addEventListener('change',()=>{state.activePath=row.path;changeSelection(row,checkbox.checked);});
     let td=el('td');td.append(checkbox);tr.append(td);
     td=el('td');
     const nameWrap=el('div','time-name-wrap');nameWrap.append(imageFor(row,'time-thumb'));
-    const infos=el('div','time-name-caption');infos.append(el('strong','file-name',row.name),el('small','file-secondary',`${row.type==='photo'?'사진':'영상'} · ${row.source||'촬영 근거 없음'}`));
+    const infos=el('div','time-name-caption');
+    const titleLine=el('div','time-title-line');titleLine.append(el('strong','file-name',row.name));
+    const evidenceButton=el('button','evidence-trigger','ⓘ 근거');evidenceButton.type='button';
+    evidenceButton.title=`${row.name} 촬영일시 판정 근거 보기`;
+    evidenceButton.addEventListener('click',event=>{event.stopPropagation();setActiveFile(row.path);openEvidence(row);});
+    titleLine.append(evidenceButton);
+    infos.append(titleLine,el('small','file-secondary',`${row.type==='photo'?'사진':'영상'} · ${row.source||'촬영 근거 없음'}`));
     nameWrap.append(infos);td.append(nameWrap);td.title=row.path;tr.append(td);
     td=el('td');td.append(dateCell(row.captured||'—'));tr.append(td);
     td=el('td');td.append(dateCell(canSelect(row)?(state.previews.get(row.path)||'계산 중…'):'—',true));tr.append(td);
@@ -263,6 +273,7 @@ async function showSidePreview(){
   $('#fileMediaDate').textContent=row?.captured||'촬영일 미확인';
   $('#fileMediaSource').textContent=row?(row.source||'근거 없음')+(row.note?' · '+row.note:''):'파일의 내장 촬영 정보와 동반 XML을 확인합니다.';
   $('#openViewer').disabled=!row;
+  $('#fileEvidence').disabled=!row;
   $('#previousMedia').disabled=!row||filteredFiles()[0]?.path===row.path;
   $('#nextMedia').disabled=!row||filteredFiles().at(-1)?.path===row.path;
   $('#fileMedia').replaceChildren(el('div','media-placeholder',row?'미리보기 준비 중…':'파일을 선택하면 사진·영상의 현재 모습을 보여줍니다.'));
@@ -371,6 +382,8 @@ function schedulePreview(){
 async function scanFiles(){
   if(state.running||!state.queue.length)return;
   if(state.viewerOpen)closeViewer();
+  if(state.evidenceOpen)closeEvidence();
+  if(state.helpOpen)closeHelp();
   state.files=[];state.selected.clear();state.reviewApproved.clear();state.previews.clear();state.page=0;state.timePage=0;state.activePath='';
   state.thumbnailCache.clear();state.thumbnailPending.clear();state.mediaRequest++;state.viewerRequest++;
   ++previewSeq;clearTimeout(previewTimer);
@@ -502,6 +515,108 @@ $('#goTime').addEventListener('click',()=>openTab('time'));
 $('#goSave').addEventListener('click',()=>openTab('save'));
 $('#goFiles').addEventListener('click',()=>openTab('files'));
 $('#goHome').addEventListener('click',()=>openTab('files'));
+// Read-only audit overlays. All date evidence is collected from the metadata at scan time.
+const helpTopics=[
+  {title:'판정 순서',description:'파일 날짜가 아닌 카메라 기록을 먼저 살펴봅니다.',items:[
+    ['근거를 보는 방법','파일 확인 탭에서 사진·영상을 선택하고 “ⓘ 촬영일시 근거 자세히 보기”를 누르세요. 날짜 변경 목록에도 파일별 “ⓘ 근거” 버튼이 있습니다.'],
+    ['여러 날짜가 다르면','XML·원본 촬영일·QuickTime 시각의 시간대와 원본 파일의 기록을 비교합니다. 서로 일치하지 않으면 확인이 필요합니다.'],
+    ['신뢰도의 뜻','높음: 촬영 의도가 분명한 기록. 조건부: 촬영 기록일 수도 있어 다른 정보와 비교 필요. 낮음: 촬영시간 판단에 부적합. 카메라 시계 오설정 가능성은 남습니다.']]},
+  {title:'사진 EXIF',description:'RAW·JPG 등 스틸 사진의 촬영 시각',items:[
+    ['DateTimeOriginal · 높음','카메라가 사진을 촬영할 때 저장하는 시계값입니다. 카메라 시계 자체가 틀렸다면 날짜도 달라집니다.'],
+    ['OffsetTimeOriginal · 보조 근거','원본 촬영일시의 UTC 시간대 오프셋입니다. EXIF 날짜에 +09:00 등이 있으면 정확한 시간대 해석에 유리합니다.'],
+    ['CreateDate / XMP · 조건부','디지털화 또는 편집 저장 시각일 수 있습니다. DateTimeOriginal이 없으면 참고하지만 동일하게 단정하지 않습니다.']]},
+  {title:'영상 메타데이터',description:'MP4 · MOV에서 녹화 날짜를 찾는 방법',items:[
+    ['CreationDate / DateTimeOriginal · 높음','영상 안에 녹화/촬영일시가 명시된 경우 우선합니다. +09:00 등 오프셋이 있으면 시간대까지 읽습니다.'],
+    ['QuickTime CreateDate · 조건부','영상 헤더의 생성 시각은 UTC로 저장하는 것이 원칙이지만 실제 카메라에 따라 현지 시각일 수 있습니다. 무조건 9시간을 더하지 않습니다.'],
+    ['TrackCreateDate / MediaCreateDate · 조건부','영상·음성 트랙의 생성 시각입니다. 촬영 시작 시각인지 다른 기록과 교차 검증해야 합니다.']]},
+  {title:'Sony XML',description:'FX3 등 소니 영상의 동반 파일',items:[
+    ['CreationDate + 시간대 · 높음','Sony XML의 CreationDate에는 예를 들어 2026-11-10T10:28:19+09:00 형태의 시각이 기록됩니다.'],
+    ['MP4와 비교','XML 10:28:19 +09:00와 MP4 QuickTime 01:28:19 UTC는 동일한 순간입니다. 둘이 다르면 확인 필요입니다.'],
+    ['주의','XML은 함께 이동하거나 이름 짝이 맞아야 합니다. XML이 없어도 내부 촬영 기록이 분명한 영상은 수정 가능합니다.']]},
+  {title:'파일 생성일',description:'Finder · 탐색기 날짜는 원본 촬영일과 다릅니다.',items:[
+    ['FileCreateDate / FileModifyDate · 낮음','복사·이동·외장하드 저장·다운로드·변경 작업으로 바뀔 수 있는 파일 시스템 날짜입니다.'],
+    ['절대로 자동 대체하지 않음','촬영일시 메타데이터가 없으면 파일 생성일을 원래 촬영일로 추측하여 자동 사용하지 않습니다.'],
+    ['선택적으로 맞추기','저장 탭의 파일 생성·수정일 변경은 별도의 선택 옵션이며 파일 시스템에 따라 지원 여부가 다릅니다.']]},
+  {title:'시간대·수정',description:'확정할 수 없는 날짜를 안전하게 수정하는 방법',items:[
+    ['시간대 미확정','QuickTime 값만 있고 UTC인지 현지시간인지 모르면 확인 필요로 표시합니다. 촬영 날짜 자체는 존재하므로 승인 후 수정할 수 있습니다.'],
+    ['해석 방법 선택','날짜 변경 탭에서 “QuickTime UTC → 컴퓨터 시간대” 또는 “QuickTime 값을 현지 시각으로”를 선택하고 예상 날짜를 확인하세요.'],
+    ['작업 기본값','↑↓/←→ 파일 이동 · Enter 체크·해제 · Space 큰 미리보기 · Esc 닫기. 원본을 안전하게 보존하려면 복사본으로 저장을 권장합니다.']]}
+];
+function openEvidence(row=activeRow()){
+  if(!row)return;
+  if(state.viewerOpen)closeViewer();
+  if(state.helpOpen)closeHelp();
+  state.evidenceOpen=true;state.evidencePage=0;state.evidenceTarget=row.path;
+  $('#evidenceOverlay').hidden=false;
+  renderEvidence();$('#evidenceClose').focus();
+}
+function closeEvidence(){
+  state.evidenceOpen=false;$('#evidenceOverlay').hidden=true;
+  if(state.tab==='time')$('#timeRows tr.active')?.focus({preventScroll:true});
+  else if(state.tab==='files')$('#fileEvidence').focus();
+}
+function renderEvidence(){
+  const row=state.files.find(x=>x.path===state.evidenceTarget);
+  if(!row){closeEvidence();return;}
+  $('#evidenceName').textContent=row.name;
+  $('#evidenceCapture').textContent=(row.captured||'촬영일시 미확인')+' · '+(labels[row.state]||'분석');
+  $('#evidenceSource').textContent=row.source||'근거 없음';
+  $('#evidenceNote').textContent=row.note||'표시된 정보는 촬영 당시 카메라 기록입니다. 실제 시계 설정은 검증할 수 없습니다.';
+  $('#evidenceCompare').textContent=row.evidence?.comparison||'촬영일시와 관련된 메타데이터를 아래에서 비교할 수 있습니다.';
+  const items=row.evidence?.items||[];
+  const pageSize=3,pages=Math.max(1,Math.ceil(items.length/pageSize));
+  state.evidencePage=Math.min(state.evidencePage,pages-1);
+  const start=state.evidencePage*pageSize;
+  $('#evidenceTotal').textContent=items.length+'개 항목';
+  $('#evidencePageLabel').textContent=`${state.evidencePage+1} / ${pages}`;
+  $('#evidencePrev').disabled=state.evidencePage===0;
+  $('#evidenceNext').disabled=state.evidencePage===pages-1;
+  const list=$('#evidenceRows');list.replaceChildren();
+  if(!items.length){list.append(el('p','evidence-empty','추출 가능한 촬영일시 관련 메타데이터가 없습니다. 파일 생성일을 촬영일로 자동 대체하지 않습니다.'));return;}
+  for(const item of items.slice(start,start+pageSize)){
+    const card=el('div','evidence-entry');
+    const title=el('div','evidence-entry-title');
+    title.append(el('strong','',item.tag),el('span','trust '+item.grade,item.label));
+    if(item.chosen)title.append(el('span','trust chosen','표시 시각과 일치'));
+    card.append(title);
+    const raw=el('div','evidence-raw',item.raw);raw.title=item.raw;
+    card.append(raw,el('div','evidence-desc',`${item.category} · 시간대: ${item.timezone} · ${item.description}`));
+    list.append(card);
+  }
+}
+function openHelp(){
+  if(state.evidenceOpen)closeEvidence();
+  if(state.viewerOpen)closeViewer();
+  state.helpOpen=true;$('#helpOverlay').hidden=false;
+  renderHelp();$('#helpClose').focus();
+}
+function closeHelp(){state.helpOpen=false;$('#helpOverlay').hidden=true;$('#helpButton').focus();}
+function renderHelp(){
+  const topic=helpTopics[state.helpPage],topics=$('#helpTopics');topics.replaceChildren();
+  helpTopics.forEach((t,i)=>{
+    const btn=el('button','help-topic'+(i===state.helpPage?' active':''),t.title);
+    btn.type='button';btn.setAttribute('aria-pressed',String(i===state.helpPage));
+    btn.addEventListener('click',()=>{state.helpPage=i;renderHelp();});topics.append(btn);
+  });
+  const content=$('#helpContent');content.replaceChildren();
+  content.append(el('h3','',topic.title),el('p','help-intro',topic.description));
+  for(const [title,description] of topic.items){
+    const card=el('div','help-entry');card.append(el('strong','',title),el('p','',description));content.append(card);
+  }
+  $('#helpPageLabel').textContent=`${state.helpPage+1} / ${helpTopics.length}`;
+  $('#helpPrev').disabled=state.helpPage===0;$('#helpNext').disabled=state.helpPage===helpTopics.length-1;
+}
+$('#helpButton').addEventListener('click',openHelp);
+$('#helpClose').addEventListener('click',closeHelp);
+$('#helpDone').addEventListener('click',closeHelp);
+$('#helpPrev').addEventListener('click',()=>{state.helpPage=Math.max(0,state.helpPage-1);renderHelp();});
+$('#helpNext').addEventListener('click',()=>{state.helpPage=Math.min(helpTopics.length-1,state.helpPage+1);renderHelp();});
+$('#fileEvidence').addEventListener('click',()=>openEvidence());
+$('#evidenceClose').addEventListener('click',closeEvidence);
+$('#evidenceHelp').addEventListener('click',openHelp);
+$('#evidencePrev').addEventListener('click',()=>{state.evidencePage--;renderEvidence();});
+$('#evidenceNext').addEventListener('click',()=>{state.evidencePage++;renderEvidence();});
+
 // Local, editable shortcuts. Space/arrow keys work only when not typing and app is focused.
 function friendlyShortcut(value){
   return (value||'설정 안 됨').split('+').map(key=>{
@@ -545,6 +660,10 @@ function shortcutAction(id){
   else if(id==='nextTab')openTab(tabs[(tabs.indexOf(state.tab)+1)%tabs.length]);
   else if(id==='prevTab')openTab(tabs[(tabs.indexOf(state.tab)+tabs.length-1)%tabs.length]);
   else if(id==='search'){openTab('files');$('#search').focus();$('#search').select();}
+  else if(id==='toggleSelection'){
+    if(state.tab!=='time'||state.viewerOpen||state.running)return;
+    const row=ensureTimeActive();if(row&&canSelect(row))changeSelection(row,!state.selected.has(row.path));
+  }
   else if(id==='viewer'){
     if(state.viewerOpen)closeViewer();else if(['files','time'].includes(state.tab))openViewer();
   }else if(id==='nextFile'){
@@ -558,7 +677,7 @@ function shortcutAction(id){
 }
 $$('.key-button').forEach(btn=>btn.addEventListener('click',()=>{
   state.recording=btn.dataset.shortcut;
-  $('#shortcutHelp').textContent='원하는 키를 누르세요. Space/방향키는 단독으로도 지정할 수 있습니다. Esc는 취소합니다.';
+  $('#shortcutHelp').textContent='원하는 키를 누르세요. Enter/Space/방향키는 단독으로 지정할 수 있습니다. Esc는 취소합니다.';
   paintShortcuts();window.dateshift.setShortcutSettings({recording:true});btn.blur();
 }));
 $('#resetKeys').addEventListener('click',()=>{
@@ -579,6 +698,15 @@ window.addEventListener('keydown',e=>{
     $('#shortcutHelp').textContent=`단축키 ${friendlyShortcut(combo)}를 저장했습니다.`;
     return;
   }
+  if(state.evidenceOpen||state.helpOpen){
+    if(e.key==='Escape'){e.preventDefault();if(state.evidenceOpen)closeEvidence();else closeHelp();}
+    else if(['ArrowLeft','ArrowRight'].includes(e.key)){
+      e.preventDefault();const step=e.key==='ArrowRight'?1:-1;
+      if(state.evidenceOpen){state.evidencePage=Math.max(0,state.evidencePage+step);renderEvidence();}
+      else{state.helpPage=Math.max(0,Math.min(helpTopics.length-1,state.helpPage+step));renderHelp();}
+    }
+    return;
+  }
   const focused=document.activeElement;
   const typing=focused&&((focused.tagName==='INPUT'&&
     !['checkbox','radio','button','submit'].includes(focused.type))||
@@ -593,6 +721,12 @@ window.addEventListener('keydown',e=>{
   const combo=shortcutFromEvent(e);
   const match=Object.entries(state.shortcuts).find(([,value])=>value===combo);
   if(match){
+    // Enter must not swallow the normal action of focused buttons, input controls or dialogs.
+    if(match[0]==='toggleSelection'){
+      const interactive=focused?.closest?.('button, a, select, textarea, input, [contenteditable="true"]');
+      if(state.tab!=='time'||state.viewerOpen||typing||
+         (interactive&&!(focused?.matches?.('input[type="checkbox"]')&&focused.closest('#timeRows'))))return;
+    }
     if(state.running&&!['tabFiles','tabTime','tabSave','tabKeys','nextTab','prevTab','viewer','nextFile','prevFile'].includes(match[0]))return;
     if(typing&&(!combo.startsWith('Mod+') || ['viewer','nextFile','prevFile'].includes(match[0])))return;
     if(e.repeat&&!['nextFile','prevFile'].includes(match[0]))return;
