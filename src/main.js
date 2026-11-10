@@ -8,8 +8,10 @@ const path = require('node:path');
 const {supported, kind, dateFields, makeWritePlan, PHOTO, VIDEO} = require('./metadata');
 const {parseDate, formatDate, dateToUTC} = require('./time');
 const {findSonyXML, shiftSonyXML, analyzeCapture, utcInstant,hostOffsetMinutes} = require('./capture');
+const {defaults:DEFAULT_KEYS,keyCombo} = require('./keybindings');
 let win, exif, busy=false, cancelled=false;
 let scanRows=new Map(), lastReport=[];
+let activeShortcuts={...DEFAULT_KEYS},shortcutRecording=false;
 // Preview URLs only serve videos that were explicitly opened and analyzed by this app.
 const mediaTokens = new Map();
 const mediaTokenForPath = new Map();
@@ -42,8 +44,22 @@ async function readTags(file){
 function makeWindow(){
   win=new BrowserWindow({width:1360,height:880,minWidth:1160,minHeight:740,
     backgroundColor:'#f5f7fb',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
-  win.setMenuBarVisibility(false);win.loadFile(path.join(__dirname,'index.html'));
+  win.setMenuBarVisibility(false);
+  // macOS menu accelerators can consume Command+1...4 before renderer keydown.
+  // Intercept modifier shortcuts in the main process and forward to the app.
+  win.webContents.on('before-input-event',(event,input)=>{
+    if(input.type!=='keyDown'||shortcutRecording)return;
+    const combo=keyCombo(input,process.platform==='darwin');
+    if(!combo.startsWith('Mod+'))return; // Space/arrows handled by renderer to respect typing focus.
+    const name=Object.keys(activeShortcuts).find(id=>activeShortcuts[id]===combo);
+    if(!name)return;
+    event.preventDefault();
+    if(!input.isAutoRepeat)send('app-shortcut',name);
+  });
+  win.loadFile(path.join(__dirname,'index.html'));
 }
+// Muted video autoplay is permitted without waiting for a second click.
+app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 app.whenReady().then(()=>{
   protocol.handle('camera-media', async request => {
     try {
@@ -87,6 +103,17 @@ app.whenReady().then(()=>{
 app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
 app.on('before-quit',()=>{cancelled=true;if(exif)void exif.end().catch(()=>{});});
 const dialogExtensions=[...PHOTO,...VIDEO].map(x=>x.slice(1));
+ipcMain.on('shortcut-settings',(_event,settings)=>{
+  if(typeof settings?.recording==='boolean')shortcutRecording=settings.recording;
+  if(settings?.shortcuts && typeof settings.shortcuts==='object'){
+    const keys={...DEFAULT_KEYS};
+    for(const id of Object.keys(DEFAULT_KEYS)){
+      const v=settings.shortcuts[id];
+      if(typeof v==='string'&&v.length<65)keys[id]=v;
+    }
+    if(new Set(Object.values(keys)).size===Object.keys(keys).length)activeShortcuts=keys;
+  }
+});
 ipcMain.handle('pick-files',async()=>{
   const r=await dialog.showOpenDialog(win,{properties:['openFile','multiSelections'],filters:[{name:'카메라 사진·영상',extensions:dialogExtensions}]});
   return r.canceled?[]:r.filePaths.map(p=>({path:p,base:''}));
@@ -118,7 +145,12 @@ async function inspect(file,base,settings={}){
     const tags=await readTags(file);
     const sidecar=kind(file)==='video'?await findSonyXML(file):null;
     const capture=analyzeCapture(tags,kind(file),sidecar,settings);
-    return {path:file,base,name:path.basename(file),type:kind(file),bytes:stat.size,mtimeMs:stat.mtimeMs,
+    const dim=(name)=>Object.entries(tags).find(([key,value])=>key.split(':').at(-1)===name && Number.isFinite(Number(value)))?.[1];
+    const rawSize=Object.entries(tags).find(([k,v])=>k.split(':').at(-1)==='ImageSize'&&/^\d+\s*x\s*\d+$/i.test(String(v)))?.[1]||'';
+    const ratioWidth=Number(dim('SourceImageWidth')||dim('ImageWidth')||dim('VideoFrameWidth')||rawSize.split(/x/i)[0]);
+    const ratioHeight=Number(dim('SourceImageHeight')||dim('ImageHeight')||dim('VideoFrameHeight')||rawSize.split(/x/i)[1]);
+    const aspect=ratioWidth>0&&ratioHeight>0&&ratioWidth/ratioHeight<10?ratioWidth/ratioHeight:16/9;
+    return {path:file,base,name:path.basename(file),type:kind(file),aspect,bytes:stat.size,mtimeMs:stat.mtimeMs,
       captured:capture.captured,state:capture.state,source:capture.source,note:capture.note||'',
       confidence:capture.confidence,sidecar:sidecar?.path||'', tags,capture, error:''};
   }catch(e){return {path:file,base,name:path.basename(file),type:kind(file),captured:null,state:'error',error:err(e),source:'읽기 실패'};}
@@ -159,9 +191,9 @@ ipcMain.handle('get-media-preview',async(_ev,params)=>{
   if(thumbnailCache.has(cacheKey))return {ok:true,thumbnail:thumbnailCache.get(cacheKey),mediaUrl};
   let thumbnail='';
   try {
-    const maxWidth=large&&row.type==='photo'?2000:760;
+    const maxWidth=large&&row.type==='photo'?1800:360;
     if(process.platform==='darwin' || process.platform==='win32'){
-      const img=await nativeImage.createThumbnailFromPath(file,{width:maxWidth,height:large?1500:620});
+      const img=await nativeImage.createThumbnailFromPath(file,{width:maxWidth,height:large?1200:240});
       if(img&&!img.isEmpty())thumbnail=img.resize({width:Math.min(maxWidth,img.getSize().width)}).toDataURL();
     }
     if(!thumbnail){
@@ -169,9 +201,14 @@ ipcMain.handle('get-media-preview',async(_ev,params)=>{
       if(img&&!img.isEmpty())thumbnail=img.resize({width:Math.min(maxWidth,img.getSize().width)}).toDataURL();
     }
   }catch { /* Unsupported camera/codec thumbnail: preview playback may still work. */ }
-  if(thumbnailCache.size>160)thumbnailCache.delete(thumbnailCache.keys().next().value);
+  if(thumbnailCache.size>=48)thumbnailCache.delete(thumbnailCache.keys().next().value);
   thumbnailCache.set(cacheKey,thumbnail);
   return {ok:true,thumbnail,mediaUrl};
+});
+// Stream URL token only: opening a video never waits for costly native thumbnail generation.
+ipcMain.handle('get-video-url',(_event,file)=>{
+  if(typeof file!=='string'||!scanRows.has(file)||scanRows.get(file)?.type!=='video')return fail('불러온 영상이 아닙니다.');
+  return {ok:true,mediaUrl:`camera-media://asset/${mediaToken(file)}`};
 });
 // Optional fallback for Sony XAVC/HEVC formats not playable in Electron's video engine.
 // Only explicitly loaded local media files can be opened with the OS player.
@@ -183,7 +220,7 @@ ipcMain.handle('open-media-external',async(_ev,file)=>{
   }catch(e){return fail(err(e));}
 });
 function firstAnchor(paths){
-  for(const file of paths||[]){const row=scanRows.get(file);if(row?.state==='ready' && row.capture?.parts)return formatDate(row.capture.parts);}
+  for(const file of paths||[]){const row=scanRows.get(file);if(['ready','review'].includes(row?.state) && row.capture?.parts)return formatDate(row.capture.parts);}
   return null;
 }
 ipcMain.handle('preview',(_ev,params)=>{
@@ -194,7 +231,7 @@ ipcMain.handle('preview',(_ev,params)=>{
     const previews=[];
     for(const file of (params.paths||[]).slice(0,LIMIT)){
       const row=scanRows.get(file);
-      if(row?.state!=='ready')continue;
+      if(!['ready','review'].includes(row?.state) || !row.capture?.parts)continue;
       const plan=makeWritePlan(row.tags,row.type,effective,row.capture);
       if(plan)previews.push({path:file,after:plan.after,tagCount:Object.keys(plan.tags).length});
     }
@@ -230,7 +267,8 @@ async function writeFilesystemTimes(file,parts){
 }
 ipcMain.handle('apply',async(_ev,params)=>{
   if(busy)return fail('다른 작업이 진행 중입니다.');
-  const {paths,options={},mode,outputDir}=params||{};
+  const {paths,options={},mode,outputDir,reviewApprovedPaths=[]}=params||{};
+  const approved=new Set(Array.isArray(reviewApprovedPaths)?reviewApprovedPaths:[]);
   if(!Array.isArray(paths)||!paths.length||paths.length>LIMIT)return fail('적용할 파일을 선택하세요.');
   if(!['copy','original'].includes(mode))return fail('저장 방식을 선택하세요.');
   if(mode==='copy'&&(!outputDir||!path.isAbsolute(outputDir)))return fail('복사본 저장 폴더를 선택하세요.');
@@ -254,15 +292,15 @@ ipcMain.handle('apply',async(_ev,params)=>{
       let dest='',destXml='',copied=false,xmlCopied=false;
       try{
         if(!row)throw Error('파일을 다시 불러오세요.');
-        if(row.state!=='ready'){
-          skipped++;outcome.status='건너뜀';outcome.message=row.state==='review'?'시간대 확인 필요':row.state==='missing'?'촬영일 미확인':row.error;
+        if(row.state!=='ready'&&!(row.state==='review'&&approved.has(file)&&row.capture?.parts)){
+          skipped++;outcome.status='건너뜀';outcome.message=row.state==='review'?'시간대 확인 후 수동 선택 필요':row.state==='missing'?'촬영일 미확인':row.error;
         }else{
           const stat=await fs.stat(file);
           if(stat.size!==row.bytes||Math.abs(stat.mtimeMs-row.mtimeMs)>5)throw Error('읽기 이후 파일이 변경됐습니다. 다시 불러오세요.');
           const fresh=await readTags(file);
           const sidecar=row.type==='video'?await findSonyXML(file):null;
           const current=analyzeCapture(fresh,row.type,sidecar,options);
-          if(current.state!=='ready')throw Error('촬영 시간대의 근거가 변경되었습니다. 다시 불러오세요.');
+          if(current.state!=='ready'&&!(current.state==='review'&&approved.has(file)&&current.parts))throw Error('촬영 시간대 확인이 필요합니다. 날짜 변경 탭에서 파일별로 승인해 주세요.');
           const plan=makeWritePlan(fresh,row.type,effective,current);
           if(!plan||!Object.keys(plan.tags).length){skipped++;outcome.status='건너뜀';outcome.message='수정할 메타데이터 날짜가 없습니다.';}
           else{
