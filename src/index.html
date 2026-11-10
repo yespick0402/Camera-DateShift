@@ -16,7 +16,7 @@
       <img src="../build/icon.png" alt="Camera DateShift 아이콘">
       <div><strong>Camera DateShift <em>v1.0.0</em></strong><span>사진·영상 원본 촬영일시 확인 및 일괄 변경</span></div>
     </div>
-    <div class="header-right"><span class="privacy">● 파일은 외부로 전송되지 않습니다</span><span class="platforms">SONY · CANON · NIKON · FUJIFILM · 기타</span></div>
+    <div class="header-right"><span class="privacy">● 파일은 외부로 전송되지 않습니다</span><span class="platforms">SONY · CANON · NIKON · FUJIFILM · 기타</span><button id="helpButton" class="btn btn-mini" type="button">ⓘ 촬영일시 도움말</button></div>
   </header>
 
   <nav class="stage-nav" aria-label="작업 단계">
@@ -50,7 +50,7 @@
         <aside class="card media-card" aria-label="선택한 파일 현재 모습">
           <div class="media-card-title"><h2>현재 파일 미리보기</h2><span class="key-tip">Space · 크게 보기</span></div>
           <div class="media-art" id="fileMedia"><div class="media-placeholder">파일을 선택하면 사진·영상의 현재 모습을 보여줍니다.</div></div>
-          <div class="media-info"><strong id="fileMediaName">선택된 파일 없음</strong><span id="fileMediaDetails">목록에서 파일 하나를 클릭하세요.</span><div class="media-datetime"><span>원본 촬영일시</span><strong id="fileMediaDate">—</strong></div><small id="fileMediaSource">파일의 내장 촬영 정보와 동반 XML을 확인합니다.</small></div>
+          <div class="media-info"><strong id="fileMediaName">선택된 파일 없음</strong><span id="fileMediaDetails">목록에서 파일 하나를 클릭하세요.</span><div class="media-datetime"><span>원본 촬영일시</span><strong id="fileMediaDate">—</strong></div><small id="fileMediaSource">파일의 내장 촬영 정보와 동반 XML을 확인합니다.</small><button type="button" id="fileEvidence" class="btn btn-mini evidence-open" disabled>ⓘ 촬영일시 근거 자세히 보기</button></div>
           <div class="media-controls"><button id="previousMedia" class="btn btn-mini" type="button">← 이전</button><button id="openViewer" class="btn btn-primary btn-mini" type="button" disabled>Space · 크게 보기</button><button id="nextMedia" class="btn btn-mini" type="button">다음 →</button></div>
         </aside>
       </div>
@@ -58,7 +58,7 @@
     </section>
 
     <section class="tab-panel" id="panel-time" aria-label="날짜 변경" hidden>
-      <div class="panel-heading"><div><span class="eyebrow">STEP 02 · 선택 및 변경 전후 비교</span><h1>파일별 날짜 변경 미리보기</h1><p>파일마다 변경 전·후를 비교하고 파일을 체크하세요. ↑↓/←→ 파일 이동, Space 미리보기, Esc 닫기.</p></div><span class="selection-info" id="timeSelection">0개 파일 선택</span></div>
+      <div class="panel-heading"><div><span class="eyebrow">STEP 02 · 선택 및 변경 전후 비교</span><h1>파일별 날짜 변경 미리보기</h1><p>파일마다 변경 전·후를 비교하고 파일을 체크하세요. ↑↓/←→ 이동, Enter 체크·해제, Space 미리보기, Esc 닫기.</p></div><span class="selection-info" id="timeSelection">0개 파일 선택</span></div>
       <div class="time-layout">
         <div class="time-options card">
           <h2>촬영일시 변경 설정</h2>
@@ -77,7 +77,7 @@
           <div class="pagination"><span id="timeShownCount">표시할 파일이 없습니다.</span><div><button id="timePrev" type="button" class="btn btn-mini">◀ 이전</button><span id="timePageLabel">1 / 1</span><button id="timeNext" type="button" class="btn btn-mini">다음 ▶</button></div></div>
         </div>
       </div>
-      <div class="panel-bottom"><p class="hint">방향키로 파일을 이동하고 Space로 미리보기, Esc로 닫습니다. 체크한 파일만 저장됩니다.</p><button id="goSave" class="btn btn-primary" type="button">선택한 파일 저장 설정 ▶</button></div>
+      <div class="panel-bottom"><p class="hint">방향키로 이동 · Enter 체크/해제 · Space 미리보기 · Esc 닫기. 체크한 파일만 저장됩니다.</p><button id="goSave" class="btn btn-primary" type="button">선택한 파일 저장 설정 ▶</button></div>
     </section>
 
     <section class="tab-panel" id="panel-save" aria-label="저장 및 결과" hidden>
@@ -112,6 +112,7 @@
           <div class="shortcut-row"><div><b>날짜 변경 실행</b><small>저장 탭에서 선택 파일 변경</small></div><button class="key-button" data-shortcut="apply" type="button"></button></div>
           <div class="shortcut-row"><div><b>파일명 검색</b><small>파일 확인 탭의 검색창으로 이동</small></div><button class="key-button" data-shortcut="search" type="button"></button></div>
           <div class="shortcut-row"><div><b>큰 미리보기 열기/닫기</b><small>Space 기본값 · 사진/영상 확인</small></div><button class="key-button" data-shortcut="viewer" type="button"></button></div>
+          <div class="shortcut-row"><div><b>파일 체크 / 체크 해제</b><small>날짜 변경 탭에서 활성 파일 선택</small></div><button class="key-button" data-shortcut="toggleSelection" type="button"></button></div>
           <div class="shortcut-row"><div><b>다음 파일</b><small>→ 또는 ↓ 방향으로 이동</small></div><button class="key-button" data-shortcut="nextFile" type="button"></button></div>
           <div class="shortcut-row"><div><b>이전 파일</b><small>← 또는 ↑ 방향으로 이동</small></div><button class="key-button" data-shortcut="prevFile" type="button"></button></div>
         </div>
@@ -120,6 +121,26 @@
       <div class="panel-bottom"><p class="hint">단축키는 이 컴퓨터에 저장되며, 앱을 다시 열어도 유지됩니다.</p><button id="goHome" class="btn btn-primary" type="button">파일 확인으로 돌아가기 ▶</button></div>
     </section>
   </main>
+
+  <div class="info-overlay" id="evidenceOverlay" hidden role="dialog" aria-modal="true" aria-label="촬영일시 판정 근거">
+    <div class="info-window">
+      <div class="info-title"><div><small>파일 촬영일시 분석 · 판정 근거</small><h2 id="evidenceName">파일 이름</h2></div><button id="evidenceClose" type="button" class="btn btn-mini">✕ 닫기 · Esc</button></div>
+      <div class="info-summary"><div><span>프로그램 판정</span><strong id="evidenceCapture">—</strong></div><div><span>선택한 근거</span><strong id="evidenceSource">—</strong></div><p id="evidenceNote">—</p><p id="evidenceCompare">—</p></div>
+      <div class="evidence-head"><strong>파일 내부에서 확인된 날짜·시간대 기록</strong><span id="evidenceTotal">0개</span></div>
+      <div class="evidence-list" id="evidenceRows" aria-live="polite"></div>
+      <div class="info-pagination"><small id="evidencePageLabel">1 / 1</small><div><button id="evidencePrev" type="button" class="btn btn-mini">◀ 이전</button><button id="evidenceNext" type="button" class="btn btn-mini">다음 ▶</button></div></div>
+      <div class="info-bottom"><span>신뢰도는 기록의 성격을 뜻하며 카메라 시계가 실제로 맞았다는 보장은 아닙니다.</span><button id="evidenceHelp" type="button" class="btn btn-primary btn-mini">촬영일시 도움말</button></div>
+    </div>
+  </div>
+  <div class="info-overlay" id="helpOverlay" hidden role="dialog" aria-modal="true" aria-label="촬영일시 도움말">
+    <div class="info-window help-window">
+      <div class="info-title"><div><small>Camera DateShift v1.0.0 · 오프라인 도움말</small><h2>촬영일시 확인 방법과 신뢰도</h2></div><button id="helpClose" type="button" class="btn btn-mini">✕ 닫기 · Esc</button></div>
+      <div class="help-pills" id="helpTopics" aria-label="도움말 항목"></div>
+      <div id="helpContent" class="help-content"></div>
+      <div class="info-pagination"><small id="helpPageLabel">1 / 6</small><div><button id="helpPrev" class="btn btn-mini" type="button">◀ 이전</button><button id="helpNext" class="btn btn-mini" type="button">다음 ▶</button></div></div>
+      <div class="info-bottom"><span>참고: ExifTool 공식 QuickTime·EXIF 태그 문서 / 사용자는 촬영 시계 설정을 확인하세요.</span><button id="helpDone" class="btn btn-primary btn-mini" type="button">확인</button></div>
+    </div>
+  </div>
 
   <div class="viewer-overlay" id="viewerOverlay" hidden role="dialog" aria-modal="true" aria-label="사진·영상 큰 미리보기">
     <div class="viewer-window"><div class="viewer-header"><div><strong id="viewerName">미리보기</strong><span id="viewerPosition">—</span></div><button id="viewerClose" type="button" class="btn btn-mini">✕ 닫기 · Space / Esc</button></div>
