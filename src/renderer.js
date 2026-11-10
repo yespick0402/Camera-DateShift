@@ -4,14 +4,10 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => Array.from(document.querySelectorAll(selector));
 const tabs = ['files', 'time', 'save', 'keys'];
-const defaults = {
-  openFiles:'Mod+O', openFolder:'Mod+Shift+O', nextTab:'Mod+Alt+ArrowRight',
-  prevTab:'Mod+Alt+ArrowLeft', apply:'Mod+Enter', search:'Mod+F',
-  viewer:'Space', nextFile:'ArrowRight', prevFile:'ArrowLeft'
-};
+const defaults={...window.DateShiftKeys.defaults};
 const mac = navigator.platform.toLowerCase().includes('mac');
 const state = {
-  queue:[],files:[],selected:new Set(),previews:new Map(),
+  queue:[],files:[],selected:new Set(),reviewApproved:new Set(),previews:new Map(),
   filter:'all',query:'',page:0,pageSize:4,activePath:'',
   timeFilter:'all',timeQuery:'',timePage:0,timePageSize:4,
   thumbnailCache:new Map(),thumbnailPending:new Map(),
@@ -26,7 +22,7 @@ const el = (tag,cls='',value) => {
 };
 const size = n => n>=1024**3?(n/1024**3).toFixed(2)+' GB':
   n>=1024**2?(n/1024**2).toFixed(1)+' MB':`${Math.ceil((n||0)/1024)} KB`;
-const labels={ready:'수정 가능',review:'시간대 확인',missing:'촬영일 없음',error:'읽기 오류'};
+const labels={ready:'수정 가능',review:'시간대 미확정',missing:'촬영일 없음',error:'읽기 오류'};
 function statusPill(row){
   const node=el('span','pill '+(row.state==='ready'?'':row.state),labels[row.state]||row.state);
   node.title=row.note||row.error||'';
@@ -42,13 +38,21 @@ function settings(){
     timeMode:$('#timeMode').value
   };
 }
-function chosenRows(){return state.files.filter(r=>r.state==='ready'&&state.selected.has(r.path));}
+function canSelect(row){return row && (row.state==='ready'||(row.state==='review'&&Boolean(row.captured)));}
+function chosenRows(){return state.files.filter(r=>canSelect(r)&&state.selected.has(r.path)&&
+  (r.state!=='review'||state.reviewApproved.has(r.path)));}
 function filteredFiles(){return state.files.filter(r=>(state.filter==='all'||r.state===state.filter)&&(!state.query||r.path.toLowerCase().includes(state.query.toLowerCase())));}
 function filteredTime(){return state.files.filter(r=>{
   const meets=state.timeFilter==='all'||r.state===state.timeFilter||
     (state.timeFilter==='needs-check'&&['review','missing'].includes(r.state));
   return meets&&(!state.timeQuery||r.path.toLowerCase().includes(state.timeQuery.toLowerCase()));
 });}
+function visibleRows(){return state.tab==='time'?filteredTime():filteredFiles();}
+function ensureTimeActive(){
+  const rows=filteredTime();
+  if(!rows.some(r=>r.path===state.activePath))state.activePath=rows[0]?.path||'';
+  return rows.find(r=>r.path===state.activePath)||null;
+}
 function openTab(tab){
   if(!tabs.includes(tab))return;
   if(state.viewerOpen)closeViewer();
@@ -63,7 +67,7 @@ function openTab(tab){
   });
   updateStats();
   if(tab==='files')requestAnimationFrame(()=>{adjustPageSize();showSidePreview();});
-  if(tab==='time')requestAnimationFrame(()=>{adjustTimePageSize();renderTimeRows();});
+  if(tab==='time')requestAnimationFrame(()=>{adjustTimePageSize();ensureTimeActive();renderTimeRows();});
 }
 function setRunning(running){
   state.running=running;
@@ -79,7 +83,7 @@ function updateApply(){
   $('#timeSelection').textContent=`${count}개 파일 선택`;
   $('#saveSelection').textContent=`${count}개 파일 선택됨`;
   $('#saveSummaryCount').textContent=`${count}개`;
-  $('#timeCount').textContent=`수정 가능 ${state.files.filter(x=>x.state==='ready').length}개 · 선택 ${count}개`;
+  $('#timeCount').textContent=`수정 가능 ${state.files.filter(x=>x.state==='ready').length} · 확인 필요 ${state.files.filter(x=>x.state==='review').length} · 선택 ${count}`;
   const opt=settings();
   const formatted=Object.entries({년:opt.amount.years,월:opt.amount.months,일:opt.amount.days,시:opt.amount.hours,분:opt.amount.minutes,초:opt.amount.seconds})
     .filter(([,n])=>n>0).map(([u,n])=>`${n}${u}`).join(' ');
@@ -119,7 +123,7 @@ async function loadThumbnail(path,large=false){
   const promise=window.dateshift.getMediaPreview(path,large).catch(e=>({ok:false,error:e.message})).then(result=>{
     state.thumbnailPending.delete(key);
     if(state.files.some(r=>r.path===path)){
-      if(state.thumbnailCache.size>200)state.thumbnailCache.delete(state.thumbnailCache.keys().next().value);
+      if(state.thumbnailCache.size>=40)state.thumbnailCache.delete(state.thumbnailCache.keys().next().value);
       state.thumbnailCache.set(key,result);
     }
     return result;
@@ -163,29 +167,43 @@ function renderFileRows(){
   $('#prevPage').disabled=state.page===0;
   $('#nextPage').disabled=state.page>=pages-1;
 }
+function changeSelection(row,desired){
+  if(state.running||!canSelect(row))return;
+  if(desired&&row.state==='review'&&!state.reviewApproved.has(row.path)){
+    const ok=window.confirm(`이 파일은 촬영 시간대가 확정되지 않았습니다.\n\n파일: ${row.name}\n현재 표시: ${row.captured}\n근거: ${row.source||'없음'}\n${row.note||''}\n\n이 값을 기준으로 날짜를 변경하시겠습니까?\n틀리게 보이면 왼쪽의 [시간대 정보 없는 영상 해석]에서 UTC 또는 현지 시각을 선택한 후 다시 확인하세요.`);
+    if(!ok){renderTimeRows();return;}
+    state.reviewApproved.add(row.path);
+  }
+  if(desired)state.selected.add(row.path);
+  else {state.selected.delete(row.path);state.reviewApproved.delete(row.path);}
+  updateApply();renderTimeRows();
+  if(settings().action==='absolute')schedulePreview();
+}
 function renderTimeRows(){
   const all=filteredTime();
+  ensureTimeActive();
   const pages=Math.max(1,Math.ceil(all.length/state.timePageSize));
   state.timePage=Math.max(0,Math.min(state.timePage,pages-1));
   const start=state.timePage*state.timePageSize;
   const tbody=$('#timeRows');tbody.replaceChildren();
   if(!all.length){const tr=el('tr'),td=el('td','empty',state.files.length?'조건에 맞는 파일이 없습니다.':'파일 확인 탭에서 촬영 파일을 불러오세요.');td.colSpan=5;tr.append(td);tbody.append(tr);}
   for(const row of all.slice(start,start+state.timePageSize)){
-    const tr=el('tr','time-row'+(state.selected.has(row.path)?' chosen':''));
+    const tr=el('tr','time-row'+(state.selected.has(row.path)?' chosen':'')+
+      (state.activePath===row.path?' active':''));
+    tr.tabIndex=-1;
+    tr.setAttribute('aria-selected',String(state.activePath===row.path));
+    tr.addEventListener('click',e=>{if(e.target.closest('input,button'))return;setActiveFile(row.path);});
+    tr.addEventListener('dblclick',e=>{if(e.target.closest('input,button'))return;setActiveFile(row.path);openViewer();});
     const checkbox=el('input');checkbox.type='checkbox';checkbox.checked=state.selected.has(row.path);
-    checkbox.disabled=state.running||row.state!=='ready';checkbox.setAttribute('aria-label',`${row.name} 변경 대상 선택`);
-    checkbox.addEventListener('change',()=>{
-      if(checkbox.checked)state.selected.add(row.path);else state.selected.delete(row.path);
-      updateApply();renderTimeRows();
-      if(settings().action==='absolute')schedulePreview();
-    });
+    checkbox.disabled=state.running||!canSelect(row);checkbox.setAttribute('aria-label',`${row.name} 변경 대상 선택`);
+    checkbox.addEventListener('change',()=>{changeSelection(row,checkbox.checked);});
     let td=el('td');td.append(checkbox);tr.append(td);
     td=el('td');
     const nameWrap=el('div','time-name-wrap');nameWrap.append(imageFor(row,'time-thumb'));
     const infos=el('div','time-name-caption');infos.append(el('strong','file-name',row.name),el('small','file-secondary',`${row.type==='photo'?'사진':'영상'} · ${row.source||'촬영 근거 없음'}`));
     nameWrap.append(infos);td.append(nameWrap);td.title=row.path;tr.append(td);
     td=el('td');td.append(dateCell(row.captured||'—'));tr.append(td);
-    td=el('td');td.append(dateCell(row.state==='ready'?(state.previews.get(row.path)||'계산 중…'):'—',true));tr.append(td);
+    td=el('td');td.append(dateCell(canSelect(row)?(state.previews.get(row.path)||'계산 중…'):'—',true));tr.append(td);
     td=el('td');td.append(statusPill(row));tr.append(td);
     tbody.append(tr);
   }
@@ -208,20 +226,32 @@ function adjustTimePageSize(){
 function setActiveFile(path){
   if(!state.files.some(r=>r.path===path))return;
   state.activePath=path;
-  const all=filteredFiles();const index=all.findIndex(r=>r.path===path);
-  if(index>=0)state.page=Math.floor(index/state.pageSize);
-  renderFileRows();showSidePreview();
+  const all=visibleRows(),index=all.findIndex(r=>r.path===path);
+  if(state.tab==='time'){
+    if(index>=0)state.timePage=Math.floor(index/state.timePageSize);
+    renderTimeRows();
+  }else{
+    if(index>=0)state.page=Math.floor(index/state.pageSize);
+    renderFileRows();showSidePreview();
+  }
   if(state.viewerOpen)void showViewerContent();
 }
 function moveFile(step){
-  const all=filteredFiles();if(!all.length)return;
+  const all=visibleRows();if(!all.length)return;
   const index=all.findIndex(r=>r.path===state.activePath);
   const next=index<0?0:Math.max(0,Math.min(all.length-1,index+step));
   setActiveFile(all[next].path);
 }
 function fillMediaArea(container,row,result,large=false){
   container.replaceChildren();
-  if(result?.thumbnail){const img=el('img','media-image');img.src=result.thumbnail;img.alt=row.name+' 미리보기';container.append(img);return;}
+  if(result?.thumbnail){
+    const img=el('img','media-image');img.src=result.thumbnail;img.alt=row.name+' 미리보기';
+    if(row.type==='video'){
+      const frame=el('div','video-poster-frame');frame.style.aspectRatio=String(row.aspect||16/9);
+      frame.append(img);container.append(frame);
+    }else container.append(img);
+    return;
+  }
   container.append(el('div','media-placeholder',row.type==='video'?
     '이 영상의 썸네일을 만들 수 없습니다. Space를 눌러 재생을 시도하세요.':
     '미리보기 이미지를 사용할 수 없습니다. OS의 RAW 코덱/썸네일 지원을 확인하세요.'));
@@ -242,7 +272,7 @@ async function showSidePreview(){
   fillMediaArea($('#fileMedia'),row,result);
 }
 function openViewer(){
-  const row=ensureActive();if(!row)return;
+  const row=state.tab==='time'?ensureTimeActive():ensureActive();if(!row)return;
   state.viewerOpen=true;
   $('#viewerOverlay').hidden=false;
   $('#viewerClose').focus();
@@ -254,38 +284,61 @@ function closeViewer(){
   const video=$('#viewerStage video');if(video){video.pause();video.removeAttribute('src');video.load();}
   $('#viewerStage').replaceChildren();
   if(state.tab==='files')$('#openViewer').focus();
+  if(state.tab==='time')document.querySelector('#timeRows tr.active')?.focus({preventScroll:true});
 }
 async function showViewerContent(){
   const row=activeRow();if(!row||!state.viewerOpen)return;
   const request=++state.viewerRequest;
-  const all=filteredFiles(),index=all.findIndex(x=>x.path===row.path);
+  const all=visibleRows(),index=all.findIndex(x=>x.path===row.path);
   $('#viewerName').textContent=row.name;
   $('#viewerPosition').textContent=`${index+1} / ${all.length} · ${row.type==='photo'?'사진':'영상'}`;
   $('#viewerCapture').textContent=`원본 촬영일시: ${row.captured||'미확인'} · ${row.source||'근거 없음'}`;
   $('#viewerPrev').disabled=index<=0;$('#viewerNext').disabled=index>=all.length-1;
-  const stage=$('#viewerStage');const oldVideo=stage.querySelector('video');if(oldVideo)oldVideo.pause();
+  const stage=$('#viewerStage'),old=stage.querySelector('video');
+  if(old){old.pause();old.removeAttribute('src');old.load();}
   stage.replaceChildren(el('div','media-placeholder','미리보기 준비 중…'));
-  const result=await loadThumbnail(row.path,row.type==='photo');
-  if(!state.viewerOpen||request!==state.viewerRequest||row.path!==state.activePath)return;
-  stage.replaceChildren();
-  if(row.type==='video'&&result?.mediaUrl){
-    const v=el('video','viewer-video');v.controls=true;v.preload='metadata';v.playsInline=true;
-    if(result.thumbnail)v.poster=result.thumbnail;
-    v.src=result.mediaUrl;
-    v.addEventListener('error',()=>{
-      if(!state.viewerOpen||request!==state.viewerRequest)return;
-      v.remove();fillMediaArea(stage,row,result,true);
-      const note=el('div','video-warning','이 코덱은 프로그램 내부 재생이 제한될 수 있습니다. 원본은 변경되지 않았습니다.');stage.append(note);
+  const current=()=>state.viewerOpen&&request===state.viewerRequest&&state.activePath===row.path;
+  if(row.type==='video'){
+    // Start streaming immediately; waiting for a video thumbnail unnecessarily delays playback.
+    const reply=await window.dateshift.getVideoUrl(row.path);
+    if(!current())return;
+    if(!reply?.ok){stage.replaceChildren(el('div','media-placeholder',reply?.error||'영상 경로를 열 수 없습니다.'));return;}
+    stage.replaceChildren();
+    const player=el('video','viewer-video');
+    player.controls=true;player.autoplay=true;player.muted=true;player.playsInline=true;
+    player.preload='metadata';player.style.aspectRatio=String(row.aspect||16/9);
+    player.setAttribute('aria-label',row.name+' 영상 미리보기');
+    const notice=el('div','video-loading','영상 여는 중…');stage.append(player,notice);
+    const sound=el('button','viewer-sound','🔇 소리 켜기');sound.type='button';
+    sound.addEventListener('click',()=>{player.muted=!player.muted;sound.textContent=player.muted?'🔇 소리 켜기':'🔊 소리 끄기';});
+    stage.append(sound);
+    player.addEventListener('loadedmetadata',()=>{
+      if(!current())return;
+      if(player.videoWidth>0&&player.videoHeight>0)player.style.aspectRatio=`${player.videoWidth} / ${player.videoHeight}`;
+      void player.play().catch(()=>{notice.textContent='재생 버튼을 누르세요. 이 코덱은 기본 영상 앱으로 열어야 할 수도 있습니다.';});
+    });
+    player.addEventListener('playing',()=>{notice.remove();});
+    player.addEventListener('error',async()=>{
+      if(!current())return;
+      player.pause();player.removeAttribute('src');player.load();
+      const thumb=await loadThumbnail(row.path);
+      if(!current())return;
+      fillMediaArea(stage,row,thumb,true);
+      stage.append(el('div','video-warning','지원하지 않는 영상 코덱입니다. 원본을 기본 영상 앱으로 열어 확인할 수 있습니다.'));
       const external=el('button','btn btn-primary viewer-external','기본 영상 앱으로 열기');
-      external.type='button';
-      external.addEventListener('click',async()=>{
-        const response=await window.dateshift.openMediaExternally(row.path);
-        if(!response.ok)alert(response.error);
-      });
-      stage.append(external);
+      external.type='button';external.addEventListener('click',async()=>{
+        const res=await window.dateshift.openMediaExternally(row.path);
+        if(!res.ok)alert(res.error);
+      });stage.append(external);
     },{once:true});
-    stage.append(v);
-  }else if(result?.thumbnail){
+    player.src=reply.mediaUrl;
+    player.load();
+    return;
+  }
+  const result=await loadThumbnail(row.path,true);
+  if(!current())return;
+  stage.replaceChildren();
+  if(result?.thumbnail){
     const img=el('img','viewer-image');img.src=result.thumbnail;img.alt=row.name+' 크게 보기';stage.append(img);
   }else fillMediaArea(stage,row,result,true);
 }
@@ -303,7 +356,7 @@ function schedulePreview(){
   const seq=++previewSeq;
   previewTimer=setTimeout(async()=>{
     if(state.running)return;
-    const paths=state.files.filter(r=>r.state==='ready').map(r=>r.path);
+    const paths=state.files.filter(canSelect).map(r=>r.path);
     if(!paths.length){state.previews.clear();renderTimeRows();return;}
     try{
       const result=await window.dateshift.preview(paths,chosenRows().map(r=>r.path),settings());
@@ -318,7 +371,7 @@ function schedulePreview(){
 async function scanFiles(){
   if(state.running||!state.queue.length)return;
   if(state.viewerOpen)closeViewer();
-  state.files=[];state.selected.clear();state.previews.clear();state.page=0;state.timePage=0;state.activePath='';
+  state.files=[];state.selected.clear();state.reviewApproved.clear();state.previews.clear();state.page=0;state.timePage=0;state.activePath='';
   state.thumbnailCache.clear();state.thumbnailPending.clear();state.mediaRequest++;state.viewerRequest++;
   ++previewSeq;clearTimeout(previewTimer);
   setRunning(true);state.hasResult=false;$('#resultBox').hidden=true;$('#resultEmpty').hidden=false;$('#saveCsv').disabled=true;
@@ -356,7 +409,7 @@ $('#pickFolder').addEventListener('click',openFolder);
 $('#clearAll').addEventListener('click',()=>{
   if(state.running)return;
   if(state.viewerOpen)closeViewer();
-  state.queue=[];state.files=[];state.selected.clear();state.previews.clear();state.page=0;state.timePage=0;state.activePath='';
+  state.queue=[];state.files=[];state.selected.clear();state.reviewApproved.clear();state.previews.clear();state.page=0;state.timePage=0;state.activePath='';
   state.thumbnailCache.clear();state.thumbnailPending.clear();
   $('#scanStatus').textContent='촬영 파일을 불러와 주세요.';
   state.hasResult=false;$('#resultBox').hidden=true;$('#resultEmpty').hidden=false;$('#saveCsv').disabled=true;
@@ -396,7 +449,7 @@ $('#selectAllReady').addEventListener('click',()=>{
   updateApply();renderTimeRows();if(settings().action==='absolute')schedulePreview();
 });
 $('#deselectAll').addEventListener('click',()=>{
-  state.selected.clear();updateApply();renderTimeRows();if(settings().action==='absolute')schedulePreview();
+  state.selected.clear();state.reviewApproved.clear();updateApply();renderTimeRows();if(settings().action==='absolute')schedulePreview();
 });
 $('#previousMedia').addEventListener('click',()=>moveFile(-1));
 $('#nextMedia').addEventListener('click',()=>moveFile(1));
@@ -428,7 +481,7 @@ async function applyChanges(){
   $('#resultBox').hidden=false;$('#resultEmpty').hidden=true;
   $('#resultHeadline').textContent='작업 처리 중';$('#resultDetails').textContent='파일별 적용 결과를 확인하고 있습니다.';
   try{
-    const result=await window.dateshift.apply(chosen,options,mode,state.outputDir);
+    const result=await window.dateshift.apply(chosen,options,mode,state.outputDir,[...state.reviewApproved]);
     if(!result.ok){$('#resultHeadline').textContent='적용하지 않음';$('#resultDetails').textContent=result.error;return;}
     $('#resultHeadline').textContent=`완료 ${result.success} · 건너뜀 ${result.skipped} · 실패 ${result.failure}`;
     $('#scanStatus').textContent=`작업 종료 · ${result.completed} / ${result.total}개${result.cancelled?' · 중단됨':''}`;
@@ -459,18 +512,7 @@ function friendlyShortcut(value){
     return {ArrowLeft:'←',ArrowRight:'→',ArrowUp:'↑',ArrowDown:'↓'}[key]||key;
   }).join(' + ');
 }
-function shortcutFromEvent(e){
-  const parts=[];
-  if(mac?e.metaKey:e.ctrlKey)parts.push('Mod');
-  if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');
-  let key='';
-  if(/^Key[A-Z]$/.test(e.code))key=e.code.slice(3);
-  else if(/^Digit[0-9]$/.test(e.code))key=e.code.slice(5);
-  else if(['Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code))key=e.code;
-  if(!key)return '';
-  if(!parts.length&&!['Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(key))return '';
-  return [...parts,key].join('+');
-}
+function shortcutFromEvent(e){return window.DateShiftKeys.keyCombo(e,mac);}
 function paintShortcuts(){
   $$('.key-button').forEach(btn=>{
     btn.classList.toggle('recording',state.recording===btn.dataset.shortcut);
@@ -478,6 +520,7 @@ function paintShortcuts(){
   });
 }
 function saveShortcuts(){
+  window.dateshift.setShortcutSettings({shortcuts:state.shortcuts});
   try{localStorage.setItem('camera-dateshift-shortcuts-v1',JSON.stringify(state.shortcuts));}
   catch{$('#shortcutHelp').textContent='저장이 제한된 환경입니다. 현재 실행 중에는 단축키가 적용됩니다.';}
 }
@@ -490,20 +533,24 @@ function loadShortcuts(){
       if(new Set(Object.values(values)).size===Object.values(values).length)state.shortcuts=values;
     }
   }catch{/* 손상된 단축키 설정은 기본값 사용 */}
-  paintShortcuts();
+  paintShortcuts();window.dateshift.setShortcutSettings({shortcuts:state.shortcuts,recording:false});
 }
 function shortcutAction(id){
-  if(id==='openFiles')void openFiles();
+  if(id==='tabFiles')openTab('files');
+  else if(id==='tabTime')openTab('time');
+  else if(id==='tabSave')openTab('save');
+  else if(id==='tabKeys')openTab('keys');
+  else if(id==='openFiles')void openFiles();
   else if(id==='openFolder')void openFolder();
   else if(id==='nextTab')openTab(tabs[(tabs.indexOf(state.tab)+1)%tabs.length]);
   else if(id==='prevTab')openTab(tabs[(tabs.indexOf(state.tab)+tabs.length-1)%tabs.length]);
   else if(id==='search'){openTab('files');$('#search').focus();$('#search').select();}
   else if(id==='viewer'){
-    if(state.viewerOpen)closeViewer();else if(state.tab==='files')openViewer();
+    if(state.viewerOpen)closeViewer();else if(['files','time'].includes(state.tab))openViewer();
   }else if(id==='nextFile'){
-    if(state.tab==='files'||state.viewerOpen)moveFile(1);
+    if(['files','time'].includes(state.tab)||state.viewerOpen)moveFile(1);
   }else if(id==='prevFile'){
-    if(state.tab==='files'||state.viewerOpen)moveFile(-1);
+    if(['files','time'].includes(state.tab)||state.viewerOpen)moveFile(-1);
   }else if(id==='apply'){
     if(state.tab!=='save'){openTab('save');$('#scanStatus').textContent='저장 설정을 확인한 후 실행하세요.';}
     else if(!$('#apply').disabled)void applyChanges();
@@ -512,47 +559,57 @@ function shortcutAction(id){
 $$('.key-button').forEach(btn=>btn.addEventListener('click',()=>{
   state.recording=btn.dataset.shortcut;
   $('#shortcutHelp').textContent='원하는 키를 누르세요. Space/방향키는 단독으로도 지정할 수 있습니다. Esc는 취소합니다.';
-  paintShortcuts();btn.blur();
+  paintShortcuts();window.dateshift.setShortcutSettings({recording:true});btn.blur();
 }));
 $('#resetKeys').addEventListener('click',()=>{
-  state.shortcuts={...defaults};state.recording='';saveShortcuts();paintShortcuts();
+  state.shortcuts={...defaults};state.recording='';saveShortcuts();window.dateshift.setShortcutSettings({recording:false});paintShortcuts();
   $('#shortcutHelp').textContent='단축키를 기본값으로 복원했습니다.';
 });
 window.addEventListener('keydown',e=>{
   if(state.recording){
     e.preventDefault();e.stopPropagation();
-    if(e.key==='Escape'){state.recording='';$('#shortcutHelp').textContent='단축키 변경을 취소했습니다.';paintShortcuts();return;}
+    if(e.key==='Escape'){state.recording='';window.dateshift.setShortcutSettings({recording:false});$('#shortcutHelp').textContent='단축키 변경을 취소했습니다.';paintShortcuts();return;}
     const combo=shortcutFromEvent(e);if(!combo)return;
     const blocked=new Set(['Mod+Q','Mod+W','Mod+R','Mod+H','Mod+M','Mod+Tab','Mod+Space']);
     if(blocked.has(combo)){$('#shortcutHelp').textContent='시스템 또는 앱 기본 단축키와 충돌할 수 있습니다. 다른 조합을 선택하세요.';return;}
     if(Object.entries(state.shortcuts).some(([id,value])=>id!==state.recording&&value===combo)){
       $('#shortcutHelp').textContent='이미 사용 중인 단축키입니다. 다른 키를 누르세요.';return;
     }
-    state.shortcuts[state.recording]=combo;state.recording='';saveShortcuts();paintShortcuts();
+    state.shortcuts[state.recording]=combo;state.recording='';saveShortcuts();window.dateshift.setShortcutSettings({recording:false});paintShortcuts();
     $('#shortcutHelp').textContent=`단축키 ${friendlyShortcut(combo)}를 저장했습니다.`;
     return;
   }
   const focused=document.activeElement;
-  const typing=focused&&(['INPUT','TEXTAREA','SELECT'].includes(focused.tagName)||focused.isContentEditable);
+  const typing=focused&&((focused.tagName==='INPUT'&&
+    !['checkbox','radio','button','submit'].includes(focused.type))||
+    ['TEXTAREA','SELECT'].includes(focused.tagName)||focused.isContentEditable);
   if(state.viewerOpen){
     if(e.key==='Escape'){e.preventDefault();closeViewer();return;}
-    if(typing)return;
-    if(e.code==='ArrowDown'){e.preventDefault();moveFile(1);return;}
-    if(e.code==='ArrowUp'){e.preventDefault();moveFile(-1);return;}
+    if(!typing && ['ArrowUp','ArrowDown'].includes(e.code)){
+      e.preventDefault();moveFile(e.code==='ArrowDown'?1:-1);return;
+    }
   }
+  if(!state.viewerOpen&&e.key==='Escape'&&state.tab==='time')return;
   const combo=shortcutFromEvent(e);
   const match=Object.entries(state.shortcuts).find(([,value])=>value===combo);
   if(match){
-    if(state.running&&!['nextTab','prevTab','viewer','nextFile','prevFile'].includes(match[0]))return;
-    if(typing&&match[0]!=='search')return;
+    if(state.running&&!['tabFiles','tabTime','tabSave','tabKeys','nextTab','prevTab','viewer','nextFile','prevFile'].includes(match[0]))return;
+    if(typing&&(!combo.startsWith('Mod+') || ['viewer','nextFile','prevFile'].includes(match[0])))return;
     if(e.repeat&&!['nextFile','prevFile'].includes(match[0]))return;
     e.preventDefault();e.stopPropagation();shortcutAction(match[0]);return;
   }
-  if(!typing&&state.tab==='files'&&!state.viewerOpen){
+  if(!typing&&['files','time'].includes(state.tab)&&!state.viewerOpen){
     if(e.code==='ArrowDown'){e.preventDefault();moveFile(1);}
     else if(e.code==='ArrowUp'){e.preventDefault();moveFile(-1);}
   }
 },true);
+// Command/Ctrl shortcuts are captured in Electron's main process first so that
+// macOS menu accelerators and focused controls cannot swallow them.
+window.dateshift.onAppShortcut(id=>{
+  if(state.recording)return;
+  if(state.running&&!['tabFiles','tabTime','tabSave','tabKeys','nextTab','prevTab'].includes(id))return;
+  shortcutAction(id);
+});
 loadShortcuts();
 if(typeof ResizeObserver!=='undefined'){
   new ResizeObserver(adjustPageSize).observe($('#tableSpace'));
