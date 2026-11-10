@@ -9,6 +9,7 @@ const {supported, kind, dateFields, makeWritePlan, PHOTO, VIDEO} = require('./me
 const {parseDate, formatDate, dateToUTC} = require('./time');
 const {findSonyXML, shiftSonyXML, analyzeCapture, utcInstant,hostOffsetMinutes} = require('./capture');
 const {defaults:DEFAULT_KEYS,keyCombo} = require('./keybindings');
+const {buildEvidence} = require('./evidence');
 let win, exif, busy=false, cancelled=false;
 let scanRows=new Map(), lastReport=[];
 let activeShortcuts={...DEFAULT_KEYS},shortcutRecording=false;
@@ -152,7 +153,7 @@ async function inspect(file,base,settings={}){
     const aspect=ratioWidth>0&&ratioHeight>0&&ratioWidth/ratioHeight<10?ratioWidth/ratioHeight:16/9;
     return {path:file,base,name:path.basename(file),type:kind(file),aspect,bytes:stat.size,mtimeMs:stat.mtimeMs,
       captured:capture.captured,state:capture.state,source:capture.source,note:capture.note||'',
-      confidence:capture.confidence,sidecar:sidecar?.path||'', tags,capture, error:''};
+      confidence:capture.confidence,sidecar:sidecar?.path||'', evidence:buildEvidence(tags,kind(file),sidecar,capture), tags,capture, error:''};
   }catch(e){return {path:file,base,name:path.basename(file),type:kind(file),captured:null,state:'error',error:err(e),source:'읽기 실패'};}
 }
 ipcMain.handle('scan',async(_ev,params)=>{
