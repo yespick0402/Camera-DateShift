@@ -1,0 +1,15 @@
+'use strict';
+const {contextBridge,ipcRenderer,webUtils}=require('electron');
+contextBridge.exposeInMainWorld('dateshift',{
+ pickFiles:()=>ipcRenderer.invoke('pick-files'),
+ pickFolder:()=>ipcRenderer.invoke('pick-folder'),
+ pickDestination:()=>ipcRenderer.invoke('pick-destination'),
+ scan:(files,settings)=>ipcRenderer.invoke('scan',{files,settings}),
+ preview:(paths,selected,options)=>ipcRenderer.invoke('preview',{paths,selected,options}),
+ apply:(paths,options,mode,outputDir)=>ipcRenderer.invoke('apply',{paths,options,mode,outputDir}),
+ saveCsv:()=>ipcRenderer.invoke('save-csv'),
+ cancel:()=>ipcRenderer.send('cancel'),
+ fromDroppedFiles:files=>files.map(f=>({path:webUtils.getPathForFile(f),base:''})).filter(f=>f.path),
+ onScanRow:callback=>ipcRenderer.on('scan-row',(_ev,v)=>callback(v)),
+ onApplyRow:callback=>ipcRenderer.on('apply-row',(_ev,v)=>callback(v))
+});

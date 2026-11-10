@@ -1,0 +1,84 @@
+{
+  "name": "camera-dateshift",
+  "version": "1.0.0",
+  "description": "Photo and video original capture time editor across camera brands (fixed release number)",
+  "main": "src/main.js",
+  "author": "Camera DateShift contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "build:mac": "electron-builder --mac --arm64 --publish never",
+    "build:windows": "electron-builder --win --x64 --publish never"
+  },
+  "dependencies": {
+    "exiftool-vendored": "^38.0.0"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "kr.cameradateshift.app",
+    "productName": "Camera DateShift",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!test/**/*",
+      "!README.md",
+      "build/icon.png"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/exiftool-vendored.*/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.photography",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "artifactName": "Camera-DateShift-${version}-mac-arm64.${ext}",
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Camera-DateShift-${version}-win-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
+  }
+}
