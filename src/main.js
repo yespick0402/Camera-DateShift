@@ -1,5 +1,7 @@
 'use strict';
-const {app, BrowserWindow, ipcMain, dialog} = require('electron');
+const {app, BrowserWindow, ipcMain, dialog, nativeImage, protocol, shell} = require('electron');
+const {Readable} = require('node:stream');
+const {randomUUID} = require('node:crypto');
 const fs = require('node:fs/promises');
 const fssync = require('node:fs');
 const path = require('node:path');
@@ -8,6 +10,18 @@ const {parseDate, formatDate, dateToUTC} = require('./time');
 const {findSonyXML, shiftSonyXML, analyzeCapture, utcInstant,hostOffsetMinutes} = require('./capture');
 let win, exif, busy=false, cancelled=false;
 let scanRows=new Map(), lastReport=[];
+// Preview URLs only serve videos that were explicitly opened and analyzed by this app.
+const mediaTokens = new Map();
+const mediaTokenForPath = new Map();
+const thumbnailCache = new Map();
+protocol.registerSchemesAsPrivileged([{scheme:'camera-media',privileges:{standard:true,secure:true,stream:true,supportFetchAPI:true}}]);
+function mediaToken(file){
+  if(!mediaTokenForPath.has(file)){
+    const token=randomUUID();mediaTokenForPath.set(file,token);mediaTokens.set(token,file);
+  }
+  return mediaTokenForPath.get(file);
+}
+
 const LIMIT=10000;
 function send(ch,data) {if(win&&!win.isDestroyed())win.webContents.send(ch,data);}
 const fail=(msg)=>({ok:false,error:msg});
@@ -30,7 +44,46 @@ function makeWindow(){
     backgroundColor:'#f5f7fb',webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   win.setMenuBarVisibility(false);win.loadFile(path.join(__dirname,'index.html'));
 }
-app.whenReady().then(()=>{makeWindow();app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)makeWindow();});});
+app.whenReady().then(()=>{
+  protocol.handle('camera-media', async request => {
+    try {
+      const url=new URL(request.url);
+      if(url.host!=='asset' || !['GET','HEAD'].includes(request.method))return new Response('Not found',{status:404});
+      const token=url.pathname.slice(1),file=mediaTokens.get(token);
+      if(!file || !scanRows.has(file) || scanRows.get(file)?.type!=='video')return new Response('Not found',{status:404});
+      const stat=await fs.stat(file);
+      if(!stat.isFile() || !stat.size)return new Response('Not found',{status:404});
+      // Video players request byte ranges. Stream only the requested section,
+      // never read an entire gigabyte-sized video into renderer memory.
+      let start=0,end=stat.size-1,partial=false;
+      const range=request.headers.get('range');
+      if(range){
+        const matched=/^bytes=(\d*)-(\d*)$/.exec(range.trim());
+        if(!matched || (!matched[1]&&!matched[2]))return new Response(null,{status:416,headers:{'Content-Range':`bytes */${stat.size}`}});
+        if(matched[1]){
+          start=Number(matched[1]);
+          end=matched[2]?Number(matched[2]):stat.size-1;
+        }else{
+          const suffix=Number(matched[2]);
+          start=Math.max(0,stat.size-suffix);
+        }
+        if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>=stat.size||start<0||end<start){
+          return new Response(null,{status:416,headers:{'Content-Range':`bytes */${stat.size}`}});
+        }
+        end=Math.min(end,stat.size-1);partial=true;
+      }
+      const mime=path.extname(file).toLowerCase()==='.mov'?'video/quicktime': 'video/mp4';
+      const headers={
+        'Content-Type':mime,'Accept-Ranges':'bytes',
+        'Content-Length':String(end-start+1),'Cache-Control':'no-store'
+      };
+      if(partial)headers['Content-Range']=`bytes ${start}-${end}/${stat.size}`;
+      const body=request.method==='HEAD'?null:Readable.toWeb(fssync.createReadStream(file,{start,end}));
+      return new Response(body,{status:partial?206:200,headers});
+    }catch{return new Response('Unavailable',{status:404});}
+  });
+  makeWindow();app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)makeWindow();});
+});
 app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
 app.on('before-quit',()=>{cancelled=true;if(exif)void exif.end().catch(()=>{});});
 const dialogExtensions=[...PHOTO,...VIDEO].map(x=>x.slice(1));
@@ -81,7 +134,7 @@ ipcMain.handle('scan',async(_ev,params)=>{
     if(!uniq.has(file))uniq.set(file,{path:file,base:typeof item.base==='string'?item.base:''});
   }
   if(uniq.size>LIMIT)return fail(`최대 ${LIMIT}개까지만 확인할 수 있습니다.`);
-  busy=true;cancelled=false;scanRows=new Map();let done=0;
+  busy=true;cancelled=false;scanRows=new Map();mediaTokens.clear();mediaTokenForPath.clear();thumbnailCache.clear();let done=0;
   try{
     for(const item of uniq.values()){
       if(cancelled)break;
@@ -92,6 +145,42 @@ ipcMain.handle('scan',async(_ev,params)=>{
     }
     return {ok:true,done,total:uniq.size,cancelled};
   } finally {busy=false;cancelled=false;}
+});
+// Native system thumbnails support many camera RAW formats and movie poster frames.
+// When the OS has no decoder for a newer RAW/HEVC file, return no thumbnail
+// instead of manufacturing a misleading "current image".
+ipcMain.handle('get-media-preview',async(_ev,params)=>{
+  const file=params?.file;
+  const large=params?.large===true;
+  if(typeof file!=='string' || !scanRows.has(file))return fail('먼저 파일을 불러와 주세요.');
+  const row=scanRows.get(file);
+  const cacheKey=file+'|'+(large?'L':'S');
+  const mediaUrl=row.type==='video'?`camera-media://asset/${mediaToken(file)}`:'';
+  if(thumbnailCache.has(cacheKey))return {ok:true,thumbnail:thumbnailCache.get(cacheKey),mediaUrl};
+  let thumbnail='';
+  try {
+    const maxWidth=large&&row.type==='photo'?2000:760;
+    if(process.platform==='darwin' || process.platform==='win32'){
+      const img=await nativeImage.createThumbnailFromPath(file,{width:maxWidth,height:large?1500:620});
+      if(img&&!img.isEmpty())thumbnail=img.resize({width:Math.min(maxWidth,img.getSize().width)}).toDataURL();
+    }
+    if(!thumbnail){
+      const img=nativeImage.createFromPath(file);
+      if(img&&!img.isEmpty())thumbnail=img.resize({width:Math.min(maxWidth,img.getSize().width)}).toDataURL();
+    }
+  }catch { /* Unsupported camera/codec thumbnail: preview playback may still work. */ }
+  if(thumbnailCache.size>160)thumbnailCache.delete(thumbnailCache.keys().next().value);
+  thumbnailCache.set(cacheKey,thumbnail);
+  return {ok:true,thumbnail,mediaUrl};
+});
+// Optional fallback for Sony XAVC/HEVC formats not playable in Electron's video engine.
+// Only explicitly loaded local media files can be opened with the OS player.
+ipcMain.handle('open-media-external',async(_ev,file)=>{
+  if(typeof file!=='string' || !scanRows.has(file) || scanRows.get(file)?.type!=='video')return fail('불러온 영상만 열 수 있습니다.');
+  try{
+    const message=await shell.openPath(file);
+    return message?fail(message):{ok:true};
+  }catch(e){return fail(err(e));}
 });
 function firstAnchor(paths){
   for(const file of paths||[]){const row=scanRows.get(file);if(row?.state==='ready' && row.capture?.parts)return formatDate(row.capture.parts);}
