@@ -86,8 +86,12 @@ function analyzeCapture(tags, type, sidecar=null, settings={}) {
     const fallback=findCaptureTag(tags,['CreateDate','DateTimeDigitized']);
     const capture=original || fallback;
     if(!capture) return {state:'missing', captured:null, source:'내부 촬영일시 없음', confidence:'none'};
-    return {state:original?'ready':'review', captured:formatHuman(capture.parts), parts:capture.parts, raw:capture.raw,
-      source:original?'사진 EXIF/XMP 촬영일시':'EXIF 생성일시만 존재', confidence:original?'strong':'uncertain', note:original?'':'촬영일시 원본 필드가 없어 확인이 필요합니다.'};
+    // EXIF CreateDate (digitization on the camera) is itself a camera timestamp,
+    // unlike the operating system FileCreateDate. Keep weak XMP-only dates reviewable.
+    const originalExifDate=original || Object.keys(tags||{}).some(k=>/^(ExifIFD|EXIF):(?:CreateDate|DateTimeDigitized)$/.test(k)&&parseDate(tags[k]));
+    return {state:originalExifDate?'ready':'review', captured:formatHuman(capture.parts), parts:capture.parts, raw:capture.raw,
+      source:original?'사진 EXIF/XMP 촬영일시':originalExifDate?'카메라 EXIF 생성일시':'사진 내부 생성일시 · 촬영 여부 확인 필요',
+      confidence:originalExifDate?'strong':'uncertain',note:originalExifDate?'':'원본 촬영 필드가 아니라 생성일시입니다. 확인 후 수정할 수 있습니다.'};
   }
   if(sidecar?.parts) {
     const movie=findCaptureTag(tags,['QuickTime:CreateDate','MovieHeader:CreateDate','CreateDate']);
@@ -106,6 +110,14 @@ function analyzeCapture(tags, type, sidecar=null, settings={}) {
   if(explicit?.parts && zoneFromOffset(explicit.parts)!==null) return {
     state:'ready',captured:formatHuman(explicit.parts),parts:explicit.parts,raw:explicit.raw,
     source:`영상 내 시간대 포함 · ${explicit.tag}`, confidence:'strong',note:''};
+  // Explicit camera recording timestamps are usable even without XML or zone.
+  // The wall time is known; the absolute UTC instant may still be unknown.
+  if(explicit && zoneFromOffset(explicit.parts)===null &&
+      /(?:^|:)(DateTimeOriginal|CreationDate)$/.test(explicit.tag)) {
+    return {state:'ready',captured:formatHuman(explicit.parts),parts:explicit.parts,raw:explicit.raw,
+      source:`영상 내부 원본 촬영일시 · ${explicit.tag}`,confidence:'camera-wall',
+      note:'촬영 시계값을 그대로 사용합니다. 시간대 오프셋은 기록되지 않았습니다.'};
+  }
   const movie=findCaptureTag(tags,['QuickTime:CreateDate','MovieHeader:CreateDate','CreateDate','Track1:MediaCreateDate','MediaCreateDate','TrackCreateDate']);
   if(!movie) {
     if(explicit) return {state:'review',captured:formatHuman(explicit.parts),parts:explicit.parts,raw:explicit.raw,
@@ -119,6 +131,6 @@ function analyzeCapture(tags, type, sidecar=null, settings={}) {
   const rendered=wallFromUTC(movie.parts,offset);
   return {state:mode==='utc'?'ready':'review',captured:formatHuman(rendered),parts:rendered,raw:movie.raw,
     source:mode==='utc'?'QuickTime UTC · 사용자 지정':'QuickTime UTC 환산 · 시간대 추정',
-    confidence:mode==='utc'?'manual':'uncertain',note:mode==='utc'?'':`촬영 장소 시간대를 확정할 정보가 없습니다. 현재 ${formatOffset(offset)}로 추정했습니다. 모드를 선택하면 적용할 수 있습니다.`};
+    confidence:mode==='utc'?'manual':'uncertain',note:mode==='utc'?'':`촬영 시간대를 확정할 수 없습니다 · ${formatOffset(offset)}로 임시 표시합니다. 실제 시간대가 다르면 설정에서 바꾸세요. 파일별 확인 후 수정 가능합니다.`};
 }
 module.exports={isoOffsetMinutes, utcInstant,wallFromUTC,hostOffsetMinutes,findSonyXML,originalDateFromXML,shiftSonyXML,analyzeCapture,formatOffset};
